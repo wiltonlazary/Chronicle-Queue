@@ -16,13 +16,10 @@
 
 package net.openhft.chronicle.queue;
 
-/**
- * Created by Peter on 05/03/2016.
- */
 public enum TailerDirection {
     NONE(0), // don't move after a read.
     FORWARD(+1), // move to the next entry
-    BACKWARD(-1) // move to the previous entry.
+    BACKWARD(-1)
     ;
 
     private final int add;

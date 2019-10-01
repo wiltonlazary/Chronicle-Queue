@@ -23,15 +23,19 @@ import org.jetbrains.annotations.NotNull;
 import java.io.File;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 
 public class RollingResourcesCache {
-    private static final int SIZE = 32;
+    public static final ParseCount NO_PARSE_COUNT = new ParseCount("", Integer.MIN_VALUE);
+    private static final int CACHE_SIZE = Integer.getInteger("chronicle.queue.rollingResourceCache.size", 128);
+    private static final int ONE_DAY_IN_MILLIS = 86400000;
+    private static final int MAX_TIMESTAMP_CACHE_SIZE = 32;
 
     @NotNull
     private final Function<String, File> fileFactory;
@@ -40,10 +44,13 @@ public class RollingResourcesCache {
     @NotNull
     private final Resource[] values;
     private final int length;
-
-    private final long epoch;
     @NotNull
     private final Function<File, String> fileToName;
+    private final String format;
+    private final ConcurrentMap<File, Long> filenameToTimestampCache =
+            new ConcurrentHashMap<>(MAX_TIMESTAMP_CACHE_SIZE);
+    private final long epoch;
+    private ParseCount lastParseCount = NO_PARSE_COUNT;
 
     public RollingResourcesCache(@NotNull final RollCycle cycle, long epoch,
                                  @NotNull Function<String, File> nameToFile,
@@ -56,14 +63,16 @@ public class RollingResourcesCache {
                                   @NotNull Function<String, File> nameToFile,
                                   @NotNull Function<File, String> fileToName) {
         this.length = length;
-        this.epoch = epoch;
         this.fileToName = fileToName;
-        this.values = new Resource[SIZE];
-        long millis = epoch > TimeUnit.DAYS.toMillis(1) ? ((epoch + 43200000) % 86400000) - 43200000 : epoch;
-        ZoneOffset zoneOffset = ZoneOffset.ofTotalSeconds((int) (millis / 1000));
-        ZoneId zoneId = ZoneId.ofOffset("GMT", zoneOffset);
-        this.formatter = DateTimeFormatter.ofPattern(format).withZone(zoneId);
+        this.values = new Resource[CACHE_SIZE];
+
+        final long millisInDay = epoch % ONE_DAY_IN_MILLIS;
+        this.epoch = millisInDay >= 0 ? epoch - millisInDay : -ONE_DAY_IN_MILLIS;
+
+        this.format = format;
+        this.formatter = DateTimeFormatter.ofPattern(this.format).withZone(ZoneId.of("UTC"));
         this.fileFactory = nameToFile;
+
     }
 
     /**
@@ -74,41 +83,84 @@ public class RollingResourcesCache {
      */
     @NotNull
     public Resource resourceFor(long cycle) {
-        long millis = cycle * length - epoch;
-        int hash = Maths.hash32(millis) & (SIZE - 1);
+        long millisSinceBeginningOfEpoch = (cycle * length);
+        int hash = Maths.hash32(millisSinceBeginningOfEpoch) & (CACHE_SIZE - 1);
         Resource dv = values[hash];
-        if (dv == null || dv.millis != millis) {
-            @NotNull String text = formatter.format(Instant.ofEpochMilli(millis));
-            values[hash] = dv = new Resource(millis, text, fileFactory.apply(text));
+        if (dv == null || dv.millis != millisSinceBeginningOfEpoch) {
+            final Instant instant = Instant.ofEpochMilli(millisSinceBeginningOfEpoch + epoch);
+            @NotNull String text = formatter.format(instant);
+            values[hash] = dv = new Resource(millisSinceBeginningOfEpoch, text, fileFactory.apply(text));
         }
         return dv;
     }
 
     public int parseCount(@NotNull String name) {
-        TemporalAccessor parse = formatter.parse(name);
-        long epochDay = parse.getLong(ChronoField.EPOCH_DAY) * 86400;
-        if (parse.isSupported(ChronoField.SECOND_OF_DAY))
-            epochDay += parse.getLong(ChronoField.SECOND_OF_DAY);
-        return Maths.toInt32(epochDay / (length / 1000));
+        ParseCount last = this.lastParseCount;
+        if (name.equals(last.name))
+            return last.count;
+        int count = parseCount0(name);
+        lastParseCount = new ParseCount(name, count);
+        return count;
+    }
+
+    private int parseCount0(@NotNull String name) {
+        try {
+            TemporalAccessor parse = formatter.parse(name);
+
+            long epochDay = parse.getLong(ChronoField.EPOCH_DAY) * 86400;
+            if (parse.isSupported(ChronoField.SECOND_OF_DAY))
+                epochDay += parse.getLong(ChronoField.SECOND_OF_DAY);
+
+            return Maths.toInt32((epochDay - ((epoch) / 1000)) / (length / 1000));
+        } catch (DateTimeParseException e) {
+            throw new RuntimeException(String.format(
+                    "Unable to parse %s using format %s", name, format), e);
+        }
     }
 
     public Long toLong(File file) {
-        TemporalAccessor parse = formatter.parse(fileToName.apply(file));
-        if (length == 86400_000L) {
-            return parse.getLong(ChronoField.EPOCH_DAY);
-        } else
-            return Instant.from(parse).toEpochMilli() / length;
+        final Long cachedValue = filenameToTimestampCache.get(file);
+        if (cachedValue != null) {
+            return cachedValue;
+        }
+
+        final TemporalAccessor parse = formatter.parse(fileToName.apply(file));
+        final long value;
+        if (length == ONE_DAY_IN_MILLIS) {
+            value = parse.getLong(ChronoField.EPOCH_DAY);
+        } else {
+            value = Instant.from(parse).toEpochMilli() / length;
+        }
+        if (filenameToTimestampCache.size() >= MAX_TIMESTAMP_CACHE_SIZE) {
+            filenameToTimestampCache.clear();
+        }
+        filenameToTimestampCache.put(file, value);
+
+        return value;
+    }
+
+    static class ParseCount {
+        final String name;
+        final int count;
+
+        public ParseCount(String name, int count) {
+            this.name = name;
+            this.count = count;
+        }
     }
 
     public static class Resource {
         public final long millis;
         public final String text;
         public final File path;
+        public final File parentPath;
+        public boolean pathExists;
 
         Resource(long millis, String text, File path) {
             this.millis = millis;
             this.text = text;
             this.path = path;
+            this.parentPath = path.getParentFile();
         }
     }
 }

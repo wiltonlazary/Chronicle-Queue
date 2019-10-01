@@ -23,14 +23,21 @@ import net.openhft.chronicle.wire.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * Created by peter on 22/05/16.
+import java.time.LocalTime;
+import java.time.ZoneId;
+
+/*
+ * Created by Peter Lawrey on 22/05/16.
  */
 class SCQRoll implements Demarshallable, WriteMarshallable {
-    private final int length;
+    private int length;
     @Nullable
-    private final String format;
-    private final long epoch;
+    private String format;
+    @Nullable
+    private LocalTime rollTime;
+    @Nullable
+    private ZoneId rollTimeZone;
+    private long epoch;
 
     /**
      * used by {@link Demarshallable}
@@ -38,16 +45,29 @@ class SCQRoll implements Demarshallable, WriteMarshallable {
      * @param wire a wire
      */
     @UsedViaReflection
-    private SCQRoll(WireIn wire) {
+    private SCQRoll(@NotNull WireIn wire) {
         length = wire.read(RollFields.length).int32();
         format = wire.read(RollFields.format).text();
         epoch = wire.read(RollFields.epoch).int64();
+        ValueIn rollTimeVIN = wire.read(RollFields.rollTime);
+        if (rollTimeVIN.hasNext())
+            rollTime = rollTimeVIN.time();
+        String zoneId = wire.read(RollFields.rollTimeZone).text();
+        if (zoneId != null)
+            rollTimeZone = ZoneId.of(zoneId);
+        else
+            rollTimeZone = null;
     }
 
-    SCQRoll(@NotNull RollCycle rollCycle, long epoch) {
+    SCQRoll(@NotNull RollCycle rollCycle,
+            long epoch,
+            @Nullable LocalTime rollTime,
+            @Nullable ZoneId rollTimeZone) {
         this.length = rollCycle.length();
         this.format = rollCycle.format();
         this.epoch = epoch;
+        this.rollTime = rollTime;
+        this.rollTimeZone = rollTimeZone;
     }
 
     @Override
@@ -55,6 +75,11 @@ class SCQRoll implements Demarshallable, WriteMarshallable {
         wire.write(RollFields.length).int32(length)
                 .write(RollFields.format).text(format)
                 .write(RollFields.epoch).int64(epoch);
+        if (rollTime != null)
+            wire.write(RollFields.rollTime).time(rollTime);
+        if (rollTimeZone != null)
+            wire.write(RollFields.rollTimeZone).text(rollTimeZone.getId());
+
     }
 
     /**
@@ -65,7 +90,56 @@ class SCQRoll implements Demarshallable, WriteMarshallable {
         return this.epoch;
     }
 
+    public String format() {
+        return this.format;
+    }
+
+    int length() {
+        return length;
+    }
+
+    @Nullable
+    public LocalTime rollTime() {
+        return rollTime;
+    }
+
+    @Nullable
+    public ZoneId rollTimeZone() {
+        return rollTimeZone;
+    }
+
+    public void length(int length) {
+        this.length = length;
+    }
+
+    public void format(@Nullable String format) {
+        this.format = format;
+    }
+
+    public void rollTime(@Nullable LocalTime rollTime) {
+        this.rollTime = rollTime;
+    }
+
+    public void rollTimeZone(@Nullable ZoneId rollTimeZone) {
+        this.rollTimeZone = rollTimeZone;
+    }
+
+    public void epoch(long epoch) {
+        this.epoch = epoch;
+    }
+
+    @Override
+    public String toString() {
+        return "SCQRoll{" +
+                "length=" + length +
+                ", format='" + format + '\'' +
+                ", epoch=" + epoch +
+                ", rollTime=" + rollTime +
+                ", rollTimeZone=" + rollTimeZone +
+                '}';
+    }
+
     enum RollFields implements WireKey {
-        length, format, epoch,
+        length, format, epoch, rollTime, rollTimeZone
     }
 }

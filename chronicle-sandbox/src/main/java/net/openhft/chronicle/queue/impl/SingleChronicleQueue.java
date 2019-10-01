@@ -17,10 +17,8 @@
  */
 package net.openhft.chronicle.queue.impl;
 
-import net.openhft.chronicle.bytes.*;
 import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.core.values.LongValue;
-import net.openhft.chronicle.queue.*;
 import net.openhft.chronicle.wire.ByteableLongArrayValues;
 import net.openhft.chronicle.wire.Wire;
 import net.openhft.chronicle.wire.WireKey;
@@ -41,7 +39,7 @@ import static net.openhft.chronicle.wire.Wires.isData;
 
 /**
  * SingleChronicle implements Chronicle over a single streaming file.
- *
+ * <p>
  * Created by peter.lawrey on 30/01/15.
  */
 public class SingleChronicleQueue extends AbstractChronicle {
@@ -77,9 +75,8 @@ public class SingleChronicleQueue extends AbstractChronicle {
 
     // used in the indexer
     private final ThreadLocal<ByteableLongArrayValues> longArray;
-    private long firstBytes;
-
     private final ChronicleQueueBuilder builder;
+    private long firstBytes;
 
     public SingleChronicleQueue(@NotNull final ChronicleQueueBuilder builder) throws IOException {
         this.builder = builder.clone();
@@ -93,6 +90,18 @@ public class SingleChronicleQueue extends AbstractChronicle {
         this.longArray = WireUtil.newLongArrayValuesPool(wireType());
 
         initialiseHeader();
+    }
+
+    static String getHostName() {
+        try {
+            return InetAddress.getLocalHost().getHostName();
+        } catch (UnknownHostException e) {
+            try {
+                return Files.readAllLines(Paths.get("etc", "hostname")).get(0);
+            } catch (Exception e2) {
+                return "localhost";
+            }
+        }
     }
 
     Wire createWire(@NotNull final Bytes bytes) {
@@ -198,18 +207,6 @@ public class SingleChronicleQueue extends AbstractChronicle {
         return header.lastIndex().getValue();
     }
 
-    static String getHostName() {
-        try {
-            return InetAddress.getLocalHost().getHostName();
-        } catch (UnknownHostException e) {
-            try {
-                return Files.readAllLines(Paths.get("etc", "hostname")).get(0);
-            } catch (Exception e2) {
-                return "localhost";
-            }
-        }
-    }
-
     @Override
     Wire wire() {
         return wire;
@@ -245,10 +242,10 @@ public class SingleChronicleQueue extends AbstractChronicle {
     /**
      * Creates a new Excerpt containing and index which will be 1L << 17L bytes long, This method is used for creating
      * both the primary and secondary indexes. Chronicle Queue uses a root primary index ( each entry in the primary
-     * index points to a unique a secondary index. The secondary index only records the address of every 64th except,
+     * index points to a unique a secondary index. The secondary index only records the addressForRead of every 64th except,
      * the except are linearly scanned from there on.
      *
-     * @return the address of the Excerpt containing the usable index, just after the header
+     * @return the addressForRead of the Excerpt containing the usable index, just after the header
      */
     long newIndex() {
         final ByteableLongArrayValues array = longArray.get();
@@ -268,7 +265,7 @@ public class SingleChronicleQueue extends AbstractChronicle {
      * This method does not update the index, as indexes are not used for meta data
      *
      * @param buffer
-     * @return the address of the appended data
+     * @return the addressForRead of the appended data
      */
     private long appendMetaDataReturnAddress(@NotNull Bytes buffer) {
         long length = checkRemainingForAppend(buffer);
@@ -381,10 +378,6 @@ public class SingleChronicleQueue extends AbstractChronicle {
         return i & LENGTH_MASK;
     }
 
-    enum MetaDataKey implements WireKey {
-        header, index2index, index
-    }
-
     protected long checkRemainingForAppend(@NotNull Bytes buffer) {
         long remaining = buffer.remaining();
         if (remaining > MAX_LENGTH) {
@@ -392,5 +385,9 @@ public class SingleChronicleQueue extends AbstractChronicle {
         }
 
         return remaining;
+    }
+
+    enum MetaDataKey implements WireKey {
+        header, index2index, index
     }
 }

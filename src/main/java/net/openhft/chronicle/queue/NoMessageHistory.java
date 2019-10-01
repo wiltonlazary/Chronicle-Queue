@@ -18,8 +18,8 @@ package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.wire.MessageHistory;
 
-/**
- * Created by peter on 27/03/16.
+/*
+ * Created by Peter Lawrey on 27/03/16.
  */
 public enum NoMessageHistory implements MessageHistory {
     INSTANCE;
@@ -39,9 +39,15 @@ public enum NoMessageHistory implements MessageHistory {
         return 0;
     }
 
+
     @Override
     public int sourceId(int n) {
         return -1;
+    }
+
+    @Override
+    public boolean sourceIdsEndsWith(int[] sourceIds) {
+        return false;
     }
 
     @Override
@@ -50,7 +56,22 @@ public enum NoMessageHistory implements MessageHistory {
     }
 
     @Override
-    public void reset() {
-
+    public void reset(int sourceId, long sourceIndex) {
+        // ignored
     }
+
+    public void reset() {
+        // no-op
+    }
+
+    @Override
+    public int lastSourceId() {
+        return -1;
+    }
+
+    @Override
+    public long lastSourceIndex() {
+        return -1;
+    }
+
 }

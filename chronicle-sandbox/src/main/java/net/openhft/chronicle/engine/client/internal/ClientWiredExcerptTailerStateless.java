@@ -5,7 +5,6 @@ import net.openhft.chronicle.engine.client.ClientWiredStatelessTcpConnectionHub;
 import net.openhft.chronicle.map.AbstactStatelessClient;
 import net.openhft.chronicle.queue.ChronicleQueue;
 import net.openhft.chronicle.queue.ExcerptTailer;
-import net.openhft.chronicle.wire.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -14,13 +13,14 @@ import java.util.function.Function;
 
 import static net.openhft.chronicle.engine.client.internal.ClientWiredChronicleQueueStateless.EventId;
 
-/**
+/*
  * Created by daniel on 14/04/15.
  */
 public class ClientWiredExcerptTailerStateless extends AbstactStatelessClient implements ExcerptTailer {
 
     private final Bytes source = Bytes.elasticByteBuffer();
     private final Wire wire;
+    long index = -1;
     private ChronicleQueue queue;
     private long cid;
     private long lastWrittenIndex;
@@ -42,19 +42,18 @@ public class ClientWiredExcerptTailerStateless extends AbstactStatelessClient im
         return wire;
     }
 
-    long index =-1;
     @Override
     public boolean readDocument(Consumer<WireIn> reader) {
         proxyReturnWireConsumerInOut(EventId.hasNext,
-                CoreFields.reply, (WriteValue)valueOut -> {
+                CoreFields.reply, (WriteValue) valueOut -> {
                     WriteMarshallable writeMarshallable = w -> w.write(EventId.index).int64(index + 1);
                     valueOut.marshallable(writeMarshallable);
                 },
                 (Function<WireIn, Void>) w -> {
-            w.read(EventId.index).int64(x -> index = x)
-             .read(CoreFields.reply).bytes(reader);
-            return null;
-        });
+                    w.read(EventId.index).int64(x -> index = x)
+                            .read(CoreFields.reply).bytes(reader);
+                    return null;
+                });
         return true;
     }
 

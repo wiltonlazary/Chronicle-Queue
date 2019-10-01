@@ -3,7 +3,7 @@ package net.openhft.chronicle.engine.client.internal;
 import net.openhft.chronicle.wire.WireIn;
 import net.openhft.chronicle.wire.WireOut;
 
-/**
+/*
  * Created by daniel on 20/04/15.
  */
 public class QueueTailerResponse extends QueueAppenderResponse {
@@ -20,13 +20,13 @@ public class QueueTailerResponse extends QueueAppenderResponse {
     @Override
     public void readMarshallable(WireIn wire) throws IllegalStateException {
         super.readMarshallable(wire);
-        wire.read(()->"start").int64(x -> start = x);
+        wire.read(() -> "start").int64(x -> start = x);
     }
 
     @Override
     public void writeMarshallable(WireOut wire) {
         super.writeMarshallable(wire);
-        wire.write(()->"start").int64(start);
+        wire.write(() -> "start").int64(start);
     }
 
     @Override

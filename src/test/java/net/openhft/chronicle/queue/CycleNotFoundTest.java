@@ -16,15 +16,13 @@
 
 package net.openhft.chronicle.queue;
 
-import net.openhft.chronicle.queue.impl.RollingChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
-import net.openhft.chronicle.queue.impl.single.Utils;
 import net.openhft.chronicle.wire.DocumentContext;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -36,23 +34,24 @@ import java.util.concurrent.atomic.AtomicLong;
 import static net.openhft.chronicle.queue.RollCycles.TEST_SECONDLY;
 import static org.junit.Assert.assertEquals;
 
+@RequiredForClient
 public class CycleNotFoundTest extends ChronicleQueueTestBase {
-    private static final int BLOCK_SIZE = 256 << 20;
+
     private static final int NUMBER_OF_TAILERS = 10;
     private static final long INTERVAL_US = 25;
     private static final long NUMBER_OF_MSG = 100_000; // this is working this  1_000_000 but
     // reduced so that it runs quicker for the continuous integration (CI)
 
-    @Test(timeout = 50000)
-    public void tailerCycleNotFoundTest() throws IOException, InterruptedException, ExecutionException {
-        File path = Utils.tempDir("tailerCycleNotFoundTest");  // added nano time just to make
+    @Test(timeout = 50_000L)
+    public void tailerCycleNotFoundTest() throws InterruptedException, ExecutionException {
+        File path = DirectoryUtils.tempDir("tailerCycleNotFoundTest");  // added nano time just to make
 
         ExecutorService executorService = Executors.newFixedThreadPool((int) NUMBER_OF_MSG);
         AtomicLong counter = new AtomicLong();
 
         Runnable reader = () -> {
             long count = 0;
-            try (RollingChronicleQueue rqueue = SingleChronicleQueueBuilder
+            try (ChronicleQueue rqueue = SingleChronicleQueueBuilder
                     .fieldlessBinary(path)
                     .testBlockSize()
                     .rollCycle(RollCycles.TEST_SECONDLY)
@@ -82,13 +81,10 @@ public class CycleNotFoundTest extends ChronicleQueueTestBase {
                 try (DocumentContext dc = tailer.readingDocument()) {
                     Assert.assertFalse(dc.isPresent());
                 }
-
-
             } finally {
                 System.out.printf("Read %,d messages, thread=" + Thread.currentThread().getName() + "\n", count);
             }
         };
-
 
         List<Future> tailers = new ArrayList<>();
         for (int i = 0; i < NUMBER_OF_TAILERS; i++) {
@@ -97,7 +93,7 @@ public class CycleNotFoundTest extends ChronicleQueueTestBase {
 
         // Appender run in a different thread
         ExecutorService executorService1 = Executors.newSingleThreadExecutor();
-        executorService1.submit(() -> {
+        Future<?> submit = executorService1.submit(() -> {
             ChronicleQueue wqueue = SingleChronicleQueueBuilder
                     .fieldlessBinary(path)
                     .testBlockSize()
@@ -118,8 +114,8 @@ public class CycleNotFoundTest extends ChronicleQueueTestBase {
                     return;
             }
             wqueue.close();
-        }).get();
-
+        });
+        submit.get();
 
         System.out.println("appender is done.");
 

@@ -16,15 +16,14 @@
 package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.bytes.Bytes;
-import net.openhft.chronicle.wire.DocumentContext;
-import net.openhft.chronicle.wire.MarshallableOut;
-import net.openhft.chronicle.wire.UnrecoverableTimeoutException;
+import net.openhft.chronicle.bytes.BytesStore;
+import net.openhft.chronicle.queue.batch.BatchAppender;
+import net.openhft.chronicle.wire.*;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.StreamCorruptedException;
-
 /**
- * The component that facilitates sequentially writing data to a {@link ChronicleQueue}.
+ * <p>The component that facilitates sequentially writing data to a {@link ChronicleQueue}.</p>
+ * <p><b>NOTE:</b> Appenders are NOT thread-safe, sharing the Appender between threads will lead to errors and unpredictable behaviour.</p>
  *
  * @author peter.lawrey
  */
@@ -33,31 +32,10 @@ public interface ExcerptAppender extends ExcerptCommon<ExcerptAppender>, Marshal
     /**
      * @param bytes to write to excerpt.
      */
-    void writeBytes(@NotNull Bytes<?> bytes) throws UnrecoverableTimeoutException;
+    void writeBytes(@NotNull BytesStore bytes) throws UnrecoverableTimeoutException;
 
-    /**
-     * Write an entry at a given index. This can use used for rebuilding a queue, or replication.
-     *
-     * @param index to write the byte to or fail.
-     * @param bytes to write.
-     * @throws StreamCorruptedException the write failed is was unable to write the data at the
-     *                                  given index.
-     */
-  /*  default void writeBytes(long index, BytesStore bytes) throws StreamCorruptedException {
-        throw new UnsupportedOperationException();
-    }
-*/
-
-    /**
-     * Write an entry at a given index. This can use used for rebuilding a queue, or replication.
-     *
-     * @param index to write the byte to or fail.
-     * @return DocumentContext to write to.
-     * @throws StreamCorruptedException the write failed is was unable to write the data at the
-     *                                  given index.
-     */
-    default DocumentContext writingDocument(long index) {
-        throw new UnsupportedOperationException();
+    default void writeBytes(@NotNull Bytes bytes) throws UnrecoverableTimeoutException {
+        writeBytes((BytesStore) bytes);
     }
 
     /**
@@ -67,13 +45,17 @@ public interface ExcerptAppender extends ExcerptCommon<ExcerptAppender>, Marshal
     long lastIndexAppended();
 
     /**
-     * @return the cycle this tailer is on, usually with chronicle-queue each cycle will have its
+     * @return the cycle this appender is on, usually with chronicle-queue each cycle will have its
      * own unique data file to store the excerpt
      */
     int cycle();
 
     /**
-     * Asynchronous call to load a block before it  needed to reduce latency.
+     * We suggest this code is called from a background thread [ not you main
+     * business thread ], it must be called from the same thread that created it, as the call to
+     * pretouch() is not thread safe. For example :
+     * <p>
+     * newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> queue.acquireAppender().pretouch(), 0, 1, TimeUnit.SECONDS);
      */
     default void pretouch() {
     }
@@ -84,6 +66,43 @@ public interface ExcerptAppender extends ExcerptCommon<ExcerptAppender>, Marshal
      */
     void padToCacheAlign(Padding padToCacheAlign);
 
-    Padding padToCacheAlign();
+    @Override
+    @NotNull
+    Padding padToCacheAlignMode();
+
+    /**
+     * A task that will be run if a WeakReference referring this appender is registered with a clean-up task.
+     *
+     * @return Task to release any associated resources
+     */
+    default Runnable getCloserJob() {
+        return () -> {
+        };
+    }
+
+    @NotNull
+    default <T> T methodWriter(@NotNull Class<T> tClass, Class... additional) {
+        return queue().methodWriter(tClass, additional);
+    }
+
+    @NotNull
+    default <T> VanillaMethodWriterBuilder<T> methodWriterBuilder(@NotNull Class<T> tClass) {
+        return queue().methodWriterBuilder(tClass);
+    }
+
+    /**
+     * Obtain the raw wire for low level direct access.
+     *
+     * @return the raw wire.
+     */
+    Wire wire();
+
+    /**
+     * @param timeoutMS
+     * @param batchAppender
+     * @return the number of messages written in call the batches
+     */
+    @Deprecated
+    long batchAppend(final int timeoutMS, BatchAppender batchAppender);
 
 }

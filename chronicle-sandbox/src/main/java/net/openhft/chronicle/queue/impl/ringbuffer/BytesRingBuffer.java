@@ -49,6 +49,12 @@ public class BytesRingBuffer {
         header.setWriteUpTo(bytes.capacity());
     }
 
+    private static void checkSize(@NotNull Bytes using, long elementSize) {
+        if (using.remaining() < elementSize)
+            throw new IllegalStateException("requires size=" + elementSize +
+                    " bytes, but only " + using.remaining() + " remaining.");
+    }
+
     /**
      * Inserts the specified element at the tail of this queue if it is possible to do so
      * immediately without exceeding the queue's capacity,
@@ -101,7 +107,6 @@ public class BytesRingBuffer {
 
                 return true;
             }
-
         } catch (IllegalStateException e) {
             // when the ring buffer is full
             return false;
@@ -190,18 +195,12 @@ public class BytesRingBuffer {
         return using;
     }
 
-    private static void checkSize(@NotNull Bytes using, long elementSize) {
-        if (using.remaining() < elementSize)
-            throw new IllegalStateException("requires size=" + elementSize +
-                    " bytes, but only " + using.remaining() + " remaining.");
-    }
-
     private enum States {BUSY, READY, USED}
 
     public interface BytesProvider {
 
         /**
-         * sets up a buffer to back the ring buffer, the data wil be read into this buffer the size of the buffer must
+         * sets up a buffer to back the ring buffer, the data will be read into this buffer the size of the buffer must
          * be as big as {@code maxSize}
          *
          * @param maxSize the number of bytes required
@@ -290,7 +289,7 @@ public class BytesRingBuffer {
     }
 
     /**
-     * This is a Bytes ( like ) implementation where the backing buffer is a ring buffer In the
+     * This is a Bytes ( like ) implementation where the backing buffer is a ring buffer. In the
      * future we could extend this class to implement Bytes.
      */
     private class RingBuffer {

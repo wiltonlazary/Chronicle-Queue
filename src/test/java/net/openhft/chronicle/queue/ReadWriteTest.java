@@ -17,8 +17,8 @@
 package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.core.OS;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import net.openhft.chronicle.core.io.IOTools;
-import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 import net.openhft.chronicle.wire.DocumentContext;
 import org.junit.After;
@@ -26,13 +26,14 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.nio.file.AccessDeniedException;
+import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 
-/**
- * Created by Jerry Shea on 14/08/16.
- */
+@RequiredForClient
 public class ReadWriteTest {
 
     private static final String STR1 = "hello", STR2 = "hey";
@@ -40,8 +41,11 @@ public class ReadWriteTest {
 
     @Before
     public void setup() {
-        chroniclePath = new File(OS.TARGET, "read_only");
-        try (SingleChronicleQueue readWrite = SingleChronicleQueueBuilder.binary(chroniclePath).readOnly(false).testBlockSize().build()) {
+        chroniclePath = new File(OS.TARGET, "read_only_" + System.currentTimeMillis());
+        try (ChronicleQueue readWrite = ChronicleQueue.singleBuilder(chroniclePath)
+                .readOnly(false)
+                .testBlockSize()
+                .build()) {
             final ExcerptAppender appender = readWrite.acquireAppender();
             appender.writeText(STR1);
             try (DocumentContext dc = appender.writingDocument()) {
@@ -52,15 +56,22 @@ public class ReadWriteTest {
 
     @After
     public void teardown() {
-        IOTools.shallowDeleteDirWithFiles(chroniclePath);
+        try {
+            IOTools.shallowDeleteDirWithFiles(chroniclePath);
+        } catch (Exception e) {
+            if (e instanceof AccessDeniedException && OS.isWindows())
+                System.err.println(e);
+            else
+                throw e;
+        }
     }
 
     @Test
     public void testReadFromReadOnlyChronicle() {
-        try (SingleChronicleQueue out = SingleChronicleQueueBuilder
+        try (ChronicleQueue out = SingleChronicleQueueBuilder
                 .binary(chroniclePath)
                 .testBlockSize()
-                .readOnly(true)
+                .readOnly(!OS.isWindows())
                 .build()) {
             // check dump
             assertTrue(out.dump().length() > 1);
@@ -75,9 +86,15 @@ public class ReadWriteTest {
         }
     }
 
+    // Can't append to a read-only chronicle
     @Test(expected = IllegalStateException.class)
     public void testWriteToReadOnlyChronicle() {
-        try (SingleChronicleQueue out = SingleChronicleQueueBuilder
+        if (OS.isWindows()) {
+            System.err.println("#460 Cannot test read only mode on windows");
+            throw new IllegalStateException("not run");
+        }
+
+        try (ChronicleQueue out = SingleChronicleQueueBuilder
                 .binary(chroniclePath)
                 .testBlockSize()
                 .readOnly(true)
@@ -85,10 +102,11 @@ public class ReadWriteTest {
             out.acquireAppender();
         }
     }
+
     @Test
     public void testToEndOnReadOnly() {
 
-        try (SingleChronicleQueue out = SingleChronicleQueueBuilder
+        try (ChronicleQueue out = SingleChronicleQueueBuilder
                 .binary(chroniclePath)
                 .testBlockSize()
                 .readOnly(true)
@@ -100,4 +118,22 @@ public class ReadWriteTest {
         }
     }
 
+    @Test
+    public void testNonWriteableFilesSetToReadOnly() {
+        assumeFalse(OS.isWindows());
+
+        Arrays.stream(chroniclePath.list()).forEach(s ->
+                assertTrue(new File(chroniclePath, s).setWritable(false)));
+
+        try (ChronicleQueue out = SingleChronicleQueueBuilder
+                .binary(chroniclePath)
+                .testBlockSize()
+                .readOnly(false)
+                .build()) {
+            ExcerptTailer tailer = out.createTailer();
+            tailer.toEnd();
+            long index = tailer.index();
+            assertTrue(index != 0);
+        }
+    }
 }

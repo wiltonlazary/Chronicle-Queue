@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ~ Copyright 2016 higherfrequencytrading.com
+  ~ Copyright 2016 chronicle.software
   ~
   ~ Licensed under the *Apache License, Version 2.0* (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
     <parent>
         <groupId>net.openhft</groupId>
         <artifactId>java-parent-pom</artifactId>
-        <version>1.1.10</version>
+        <version>1.1.18</version>
         <relativePath/>
     </parent>
 
@@ -37,20 +37,16 @@
         <dependencies>
             <dependency>
                 <groupId>net.openhft</groupId>
-                <artifactId>third-party-bom</artifactId>
+                <artifactId>third-party-bom
+                </artifactId> <!-- PLEASE DON'T LEAVE THIS ON A SNAPSHOT because they get missed in a release  -->
                 <type>pom</type>
-                <version>3.5.7</version>
+                <version>3.6.9</version>
                 <scope>import</scope>
             </dependency>
             <dependency>
                 <groupId>net.openhft</groupId>
                 <artifactId>chronicle</artifactId>
                 <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.openhft</groupId>
-                <artifactId>chronicle-wire</artifactId>
-                <version>1.7.18</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -97,6 +93,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.6.2</version>
                 <configuration>
                     <compilerArgument>-Xlint:deprecation</compilerArgument>
                     <source>1.8</source>

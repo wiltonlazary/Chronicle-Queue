@@ -16,11 +16,14 @@
 
 package net.openhft.chronicle.queue;
 
+import net.openhft.chronicle.bytes.BytesUtil;
 import net.openhft.chronicle.core.OS;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import net.openhft.chronicle.core.time.SetTimeProvider;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
-import net.openhft.chronicle.queue.impl.single.Utils;
 import net.openhft.chronicle.wire.DocumentContext;
+import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Test;
 
 import java.io.File;
@@ -28,16 +31,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
-/**
- * Created by Marcus Spiegel on 29/09/16.
- */
+@RequiredForClient
 public class TailerDirectionTest extends ChronicleQueueTestBase {
 
-    public static final int MILLIS = 86_400_000;
     private static final String TEST_MESSAGE_PREFIX = "Test entry: ";
 
     /**
@@ -54,7 +54,7 @@ public class TailerDirectionTest extends ChronicleQueueTestBase {
      * @param msg      test message
      * @return index position of the entry
      */
-    private long appendEntry(final ExcerptAppender appender, String msg) {
+    private long appendEntry(@NotNull final ExcerptAppender appender, String msg) {
         DocumentContext dc = appender.writingDocument();
         try {
             dc.wire().write().text(msg);
@@ -70,10 +70,12 @@ public class TailerDirectionTest extends ChronicleQueueTestBase {
      * @param tailer ExcerptTailer
      * @return entry or null, if no entry available
      */
-    private String readNextEntry(final ExcerptTailer tailer) {
+    private String readNextEntry(@NotNull final ExcerptTailer tailer) {
         DocumentContext dc = tailer.readingDocument();
         try {
             if (dc.isPresent()) {
+                Object parent = dc.wire().parent();
+                assert parent == tailer;
                 return dc.wire().read().text();
             }
             return null;
@@ -92,7 +94,7 @@ public class TailerDirectionTest extends ChronicleQueueTestBase {
     public void testTailerForwardBackwardRead() throws Exception {
         String basePath = OS.TARGET + "/tailerForwardBackward-" + System.nanoTime();
 
-        ChronicleQueue queue = SingleChronicleQueueBuilder.binary(basePath)
+        ChronicleQueue queue = ChronicleQueue.singleBuilder(basePath)
                 .testBlockSize()
                 .rollCycle(RollCycles.HOURLY)
                 .build();
@@ -141,10 +143,31 @@ public class TailerDirectionTest extends ChronicleQueueTestBase {
     }
 
     @Test
-    public void testTailerBackwardsReadBeyondCycle() throws Exception {
-        File basePath = Utils.tempDir("tailerForwardBackwardBeyondCycle");
+    public void uninitialisedTailerCreatedBeforeFirstAppendWithDirectionNoneShouldNotFindDocument() {
+        final AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        String path = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
+        final ChronicleQueue queue = SingleChronicleQueueBuilder.single(path).timeProvider(clock::get).testBlockSize()
+                .rollCycle(RollCycles.TEST_SECONDLY).build();
+
+        final ExcerptTailer tailer = queue.createTailer();
+        tailer.direction(TailerDirection.NONE);
+
+        final ExcerptAppender excerptAppender = queue.acquireAppender();
+        for (int i = 0; i < 10; i++) {
+            excerptAppender.writeDocument(i, (out, value) -> {
+                out.int32(value);
+            });
+        }
+
+        DocumentContext document = tailer.readingDocument();
+        assertFalse(document.isPresent());
+    }
+
+    @Test
+    public void testTailerBackwardsReadBeyondCycle() {
+        File basePath = DirectoryUtils.tempDir("tailerForwardBackwardBeyondCycle");
         SetTimeProvider timeProvider = new SetTimeProvider();
-        ChronicleQueue queue = SingleChronicleQueueBuilder.binary(basePath)
+        ChronicleQueue queue = ChronicleQueue.singleBuilder(basePath)
                 .testBlockSize()
                 .timeProvider(timeProvider)
                 .build();
@@ -179,5 +202,11 @@ public class TailerDirectionTest extends ChronicleQueueTestBase {
             assertEquals("[Backward] Wrong message " + i, msg, readNextEntry(tailer));
         }
         queue.close();
+    }
+
+    @Override
+    @After
+    public void checkRegisteredBytes() {
+        BytesUtil.checkRegisteredBytes();
     }
 }

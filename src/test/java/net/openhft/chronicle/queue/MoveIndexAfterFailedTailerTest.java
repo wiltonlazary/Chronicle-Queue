@@ -17,26 +17,29 @@
 
 package net.openhft.chronicle.queue;
 
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import net.openhft.chronicle.core.OS;
+import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 import net.openhft.chronicle.wire.ReadMarshallable;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import static java.lang.System.currentTimeMillis;
 import static net.openhft.chronicle.queue.RollCycles.HOURLY;
 
+@RequiredForClient
 public class MoveIndexAfterFailedTailerTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(MoveIndexAfterFailedTailerTest.class);
 
     @Test
-    public void test() throws IOException {
+    public void test() {
         String basePath = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
-        final ChronicleQueueBuilder myBuilder = ChronicleQueueBuilder.single(basePath)
+        final SingleChronicleQueueBuilder myBuilder = SingleChronicleQueueBuilder.single(basePath)
                 .testBlockSize()
                 .timeProvider(System::currentTimeMillis)
                 .rollCycle(HOURLY);
@@ -52,7 +55,7 @@ public class MoveIndexAfterFailedTailerTest {
         }
     }
 
-    private void read(ChronicleQueue aChronicle, int expected) {
+    private void read(@NotNull ChronicleQueue aChronicle, int expected) {
         final ExcerptTailer myTailer = aChronicle.createTailer();
         final int myLast = HOURLY.toCycle(myTailer.toEnd().index());
         final int myFirst = HOURLY.toCycle(myTailer.toStart().index());
@@ -80,7 +83,7 @@ public class MoveIndexAfterFailedTailerTest {
         };
     }
 
-    private void write(ChronicleQueue aChronicle, int messages) {
+    private void write(@NotNull ChronicleQueue aChronicle, int messages) {
         final ExcerptAppender myAppender = aChronicle.acquireAppender();
         for (int myCount = 0; myCount < messages; myCount++) {
             myAppender.writeDocument(aMarshallable -> aMarshallable.write().bytes(Long.toString(currentTimeMillis()).getBytes(StandardCharsets.UTF_8)));

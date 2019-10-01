@@ -21,6 +21,7 @@ import net.openhft.chronicle.bytes.Bytes;
 import net.openhft.chronicle.bytes.NativeBytes;
 import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -31,10 +32,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import static net.openhft.chronicle.queue.RollCycles.SMALL_DAILY;
 import static org.junit.Assert.assertEquals;
 
+@RequiredForClient
 public class ChronicleQueueTwoThreads extends ChronicleQueueTestBase {
 
     private static final int BYTES_LENGTH = 256;
-    private static final int BLOCK_SIZE = 256 << 20;
     private static final long INTERVAL_US = 10;
 
     @Ignore("long running test")
@@ -63,7 +64,6 @@ public class ChronicleQueueTwoThreads extends ChronicleQueueTestBase {
                         counter.incrementAndGet();
                     }
                 }
-
             } finally {
                 if (rlock != null) {
                     rlock.release();
@@ -81,7 +81,7 @@ public class ChronicleQueueTwoThreads extends ChronicleQueueTestBase {
                         .fieldlessBinary(name)
                         .rollCycle(SMALL_DAILY)
                         .testBlockSize()
-                        .buffered(buffered)
+                        .writeBufferMode(buffered ? BufferMode.Asynchronous : BufferMode.None)
                         .build();
 
                 ExcerptAppender appender = wqueue.acquireAppender();

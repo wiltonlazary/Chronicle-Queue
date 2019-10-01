@@ -33,7 +33,7 @@ import java.util.function.Consumer;
 import static net.openhft.chronicle.queue.impl.Indexer.IndexOffset.toAddress0;
 import static net.openhft.chronicle.queue.impl.Indexer.IndexOffset.toAddress1;
 
-/**
+/*
  * Created by peter.lawrey on 30/01/15.
  */
 public class SingleTailer implements ExcerptTailer {
@@ -68,7 +68,7 @@ public class SingleTailer implements ExcerptTailer {
 
     /**
      * The indexes are stored in many excerpts, so the index2index tells chronicle where ( in other
-     * words the address of where ) the root first level index is stored. The indexing works like a
+     * words the addressForRead of where ) the root first level index is stored. The indexing works like a
      * tree, but only 2 levels deep, the root of the tree is at index2index ( this first level index
      * is 1MB in size and there is only one of them, it only holds the addresses of the second level
      * indexes, there will be many second level indexes ( created on demand ), each is about 1MB in
@@ -120,7 +120,6 @@ public class SingleTailer implements ExcerptTailer {
                     }
                 }
             }
-
         } else {
             long lastKnownIndex = 0;
             for (long count = 0; count < ((int) (1L << 17L)); count++) {

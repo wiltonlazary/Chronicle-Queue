@@ -16,6 +16,7 @@
 
 package net.openhft.chronicle.queue.impl.single.jira;
 
+import net.openhft.chronicle.bytes.MappedFile;
 import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.queue.ChronicleQueue;
 import net.openhft.chronicle.queue.ChronicleQueueTestBase;
@@ -23,12 +24,12 @@ import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
 import net.openhft.chronicle.wire.WireType;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -59,18 +60,24 @@ public class Queue28Test extends ChronicleQueueTestBase {
      */
 
     @Test
-    public void test() throws IOException, InterruptedException {
+    public void test() {
         File dir = getTmpDir();
-        final ChronicleQueue queue = SingleChronicleQueueBuilder.builder(dir, wireType)
+        try (final ChronicleQueue queue = SingleChronicleQueueBuilder.builder(dir, wireType)
                 .testBlockSize()
-                .build();
+                .build()) {
 
-        final ExcerptTailer tailer = queue.createTailer();
-        assertFalse(tailer.readDocument(r -> r.read(TestKey.test).int32()));
+            final ExcerptTailer tailer = queue.createTailer();
+            assertFalse(tailer.readDocument(r -> r.read(TestKey.test).int32()));
 
-        final ExcerptAppender appender = queue.acquireAppender();
-        appender.writeDocument(w -> w.write(TestKey.test).int32(1));
-        Jvm.pause(100);
-        assertTrue(tailer.readDocument(r -> r.read(TestKey.test).int32()));
+            final ExcerptAppender appender = queue.acquireAppender();
+            appender.writeDocument(w -> w.write(TestKey.test).int32(1));
+            Jvm.pause(100);
+            assertTrue(tailer.readDocument(r -> r.read(TestKey.test).int32()));
+        }
+    }
+
+    @After
+    public void checkMappedFiles() {
+        MappedFile.checkMappedFiles();
     }
 }

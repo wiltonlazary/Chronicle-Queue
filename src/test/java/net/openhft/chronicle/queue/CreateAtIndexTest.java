@@ -18,59 +18,83 @@
 package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.bytes.Bytes;
-import net.openhft.chronicle.core.OS;
+import net.openhft.chronicle.bytes.BytesUtil;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import net.openhft.chronicle.core.io.IORuntimeException;
 import net.openhft.chronicle.core.io.IOTools;
-import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueExcerpts.InternalAppender;
 import net.openhft.chronicle.wire.DocumentContext;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+
 import static net.openhft.chronicle.queue.RollCycles.TEST_DAILY;
+import static net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder.single;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 /**
  * @author Rob Austin.
  */
-public class CreateAtIndexTest {
+@RequiredForClient
+public class CreateAtIndexTest extends ChronicleQueueTestBase {
 
     @Test
-    public void testWriteBytesWithIndex() throws Exception {
-        String tmp = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
-        try (SingleChronicleQueue queue = ChronicleQueueBuilder.single(tmp)
+    public void testWriteBytesWithIndex() {
+        final Bytes HELLO_WORLD = Bytes.fromString("hello world");
+        File tmp = getTmpDir();
+        try (ChronicleQueue queue = single(tmp)
                 .testBlockSize()
                 .rollCycle(TEST_DAILY)
                 .build()) {
             InternalAppender appender = (InternalAppender) queue.acquireAppender();
 
-            appender.writeBytes(0x421d00000000L, Bytes.from("hello world"));
-            appender.writeBytes(0x421d00000001L, Bytes.from("hello world"));
+            appender.writeBytes(0x421d00000000L, HELLO_WORLD);
+            appender.writeBytes(0x421d00000001L, HELLO_WORLD);
         }
-        // try again and fail.
-        try (SingleChronicleQueue queue = ChronicleQueueBuilder.single(tmp)
+
+        try (ChronicleQueue queue = single(tmp)
                 .testBlockSize()
                 .build()) {
             InternalAppender appender = (InternalAppender) queue.acquireAppender();
 
-//            try {
-                appender.writeBytes(0x421d00000000L, Bytes.from("hello world"));
-//                fail();
-//            } catch (IllegalStateException e) {
-//                assertEquals("Unable to move to index 421d00000000 as the index already exists",
-//                        e.getMessage());
-//            }
+            String before = queue.dump();
+            appender.writeBytes(0x421d00000000L, HELLO_WORLD);
+            String after = queue.dump();
+            assertEquals(before, after);
+        }
+
+        boolean runIfAssertsOn = false;
+        // TODO: implement this
+        //assert runIfAssertsOn = true;
+        if (runIfAssertsOn) {
+            try (ChronicleQueue queue = single(tmp)
+                    .testBlockSize()
+                    .build()) {
+                InternalAppender appender = (InternalAppender) queue.acquireAppender();
+
+                String before = queue.dump();
+                try {
+                    appender.writeBytes(0x421d00000000L, Bytes.from("hellooooo world"));
+                    fail();
+                } catch (IllegalStateException e) {
+                    // expected
+                }
+                String after = queue.dump();
+                assertEquals(before, after);
+            }
         }
 
         // try too far
-        try (SingleChronicleQueue queue = ChronicleQueueBuilder.single(tmp)
+        try (ChronicleQueue queue = single(tmp)
                 .testBlockSize()
                 .build()) {
             InternalAppender appender = (InternalAppender) queue.acquireAppender();
 
             try {
-                appender.writeBytes(0x421d00000003L, Bytes.from("hello world"));
+                appender.writeBytes(0x421d00000003L, HELLO_WORLD);
                 fail();
             } catch (IllegalStateException e) {
                 assertEquals("Unable to move to index 421d00000003 beyond the end of the queue",
@@ -78,13 +102,13 @@ public class CreateAtIndexTest {
             }
         }
 
-        try (SingleChronicleQueue queue = ChronicleQueueBuilder.single(tmp)
+        try (ChronicleQueue queue = single(tmp)
                 .testBlockSize()
                 .build()) {
             InternalAppender appender = (InternalAppender) queue.acquireAppender();
 
-            appender.writeBytes(0x421d00000002L, Bytes.from("hello world"));
-            appender.writeBytes(0x421d00000003L, Bytes.from("hello world"));
+            appender.writeBytes(0x421d00000002L, HELLO_WORLD);
+            appender.writeBytes(0x421d00000003L, HELLO_WORLD);
         }
 
         try {
@@ -93,13 +117,15 @@ public class CreateAtIndexTest {
         }
     }
 
+    // TODO: 2 or more threads soak test
+
     @Test
-    public void testWrittenAndReadIndexesAreTheSameOfTheFirstExcerpt() throws Exception {
-        String tmp = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
+    public void testWrittenAndReadIndexesAreTheSameOfTheFirstExcerpt() {
+        File tmp = getTmpDir();
 
-        long expected = 0;
+        long expected;
 
-        try (SingleChronicleQueue queue = ChronicleQueueBuilder.single(tmp)
+        try (ChronicleQueue queue = single(tmp)
                 .testBlockSize()
                 .build()) {
 
@@ -119,7 +145,7 @@ public class CreateAtIndexTest {
             ExcerptTailer tailer = queue.createTailer();
             try (DocumentContext dc = tailer.readingDocument()) {
 
-                String text = dc.wire().read().text();
+                dc.wire().read().text();
 
                 {
                     long actualIndex = dc.index();
@@ -136,5 +162,10 @@ public class CreateAtIndexTest {
                 }
             }
         }
+    }
+
+    @After
+    public void checkRegisteredBytes() {
+        BytesUtil.checkRegisteredBytes();
     }
 }

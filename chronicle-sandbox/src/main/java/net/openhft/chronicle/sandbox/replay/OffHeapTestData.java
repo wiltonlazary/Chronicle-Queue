@@ -21,10 +21,12 @@ package net.openhft.chronicle.sandbox.replay;
 import net.openhft.lang.model.Byteable;
 import net.openhft.lang.model.constraints.MaxSize;
 
-/**
+/*
  * Created by peter.lawrey on 20/01/15.
  */
 public interface OffHeapTestData extends Byteable {
+    String getName();
+
     /*
     CREATE TABLE testSet(
         id BIGINT NOT NULL AUTO_INCREMENT,
@@ -37,17 +39,15 @@ public interface OffHeapTestData extends Byteable {
     */
     void setName(@MaxSize(16) CharSequence name);
 
-    String getName();
+    long getAge();
 
     void setAge(long age);
 
-    long getAge();
+    double getImportance();
 
     void setImportance(double importance);
 
-    double getImportance();
+    long getTimestamp();
 
     void setTimestamp(long timestamp);
-
-    long getTimestamp();
 }

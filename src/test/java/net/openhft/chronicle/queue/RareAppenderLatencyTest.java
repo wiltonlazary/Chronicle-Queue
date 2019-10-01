@@ -28,7 +28,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -37,7 +36,7 @@ import java.util.concurrent.Future;
 
 import static junit.framework.TestCase.assertFalse;
 
-/**
+/*
  * Created by skidder on 8/2/16.
  *
  * Targeting the problem of tailers in different threads where one writes very rarely, and the other
@@ -49,7 +48,6 @@ import static junit.framework.TestCase.assertFalse;
 public class RareAppenderLatencyTest {
     private final static int HEAVY_MSGS = 1_000_000;
     private final static int RARE_MSGS = 50;
-
 
     boolean isAssertionsOn;
     private ExecutorService appenderES;
@@ -65,9 +63,8 @@ public class RareAppenderLatencyTest {
         appenderES.shutdownNow();
     }
 
-
     @Test
-    public void testRareAppenderLatency() throws IOException, InterruptedException, ExecutionException {
+    public void testRareAppenderLatency() throws InterruptedException, ExecutionException {
         System.setProperty("ignoreHeaderCountIfNumberOfExcerptsBehindExceeds", "" + (1 << 12));
 
         if (Jvm.isDebug())
@@ -85,7 +82,7 @@ public class RareAppenderLatencyTest {
         new File(pathname).deleteOnExit();
 
         // Shared queue between two threads appending. One appends very rarely, another heavily.
-        ChronicleQueue queue = new SingleChronicleQueueBuilder(pathname)
+        ChronicleQueue queue = SingleChronicleQueueBuilder.binary(pathname)
                 .rollCycle(RollCycles.HOURLY)
                 .build();
 
@@ -129,7 +126,6 @@ public class RareAppenderLatencyTest {
                     .write(() -> "msg").text(text);
         }
         long l = System.currentTimeMillis() - now;
-
 
         // Write another message from the Main thread (this will be fast since we are caught up)
         now = System.currentTimeMillis();

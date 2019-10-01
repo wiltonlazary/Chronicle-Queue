@@ -26,7 +26,7 @@ public interface WireStoreSupplier {
     WireStore acquire(int cycle, boolean createIfAbsent);
 
     /**
-     * the next available cycle, not cycle will be created by this method, typically used by a
+     * the next available cycle, no cycle will be created by this method, typically used by a
      * tailer.
      *
      * @param currentCycle the current cycle
@@ -39,9 +39,8 @@ public interface WireStoreSupplier {
      * the cycles between a range, inclusive
      *
      * @param lowerCycle the lower cycle inclusive
-     * @param upperCycle the uper cycle inclusive
+     * @param upperCycle the upper cycle inclusive
      * @return the cycles between a range, inclusive
-     * @throws ParseException
      */
     NavigableSet<Long> cycles(int lowerCycle, int upperCycle) throws ParseException;
 }

@@ -15,22 +15,31 @@
  */
 package net.openhft.chronicle.queue.impl;
 
-import net.openhft.chronicle.core.annotation.Nullable;
+import net.openhft.chronicle.core.Jvm;
+import org.jetbrains.annotations.Nullable;
 import net.openhft.chronicle.queue.RollDetails;
 import net.openhft.chronicle.queue.TailerDirection;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.ref.Reference;
+import java.lang.ref.WeakReference;
 import java.text.ParseException;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class WireStorePool {
+public class WireStorePool implements StoreReleasable {
+    // must be power-of-two
+    private static final int ROLL_CYCLE_CACHE_SIZE = 64;
+    private static final int INDEX_MASK = ROLL_CYCLE_CACHE_SIZE - 1;
     @NotNull
     private final WireStoreSupplier supplier;
     @NotNull
-    private final Map<RollDetails, WireStore> stores;
+    private final Map<RollDetails, WeakReference<WireStore>> stores;
     private final StoreFileListener storeFileListener;
+    // protected by synchronized on acquire()
+    private final RollDetails[] cache = new RollDetails[ROLL_CYCLE_CACHE_SIZE];
     private boolean isClosed = false;
 
     private WireStorePool(@NotNull WireStoreSupplier supplier, StoreFileListener storeFileListener) {
@@ -44,32 +53,50 @@ public class WireStorePool {
         return new WireStorePool(supplier, storeFileListener);
     }
 
+    private static int cacheIndex(final int cycle) {
+        return cycle & INDEX_MASK;
+    }
+
     public synchronized void close() {
         if (isClosed)
             return;
         isClosed = true;
 
-        stores.values().forEach(this::release);
+        stores.values().stream()
+                .map(Reference::get)
+                .filter(Objects::nonNull)
+                .forEach(this::release);
     }
 
     @Nullable
     public synchronized WireStore acquire(final int cycle, final long epoch, boolean createIfAbsent) {
-        RollDetails rollDetails = new RollDetails(cycle, epoch);
-        WireStore store = stores.get(rollDetails);
-        if (store != null) {
-            if (store.tryReserve())
-                return store;
-            else
-                /// this should never happen,
-                // this method is synchronized
-                // and this remove below, is only any use if the acquire method below that fails
+        final int cacheIndex = cacheIndex(cycle);
+        RollDetails rollDetails;
+        rollDetails = cache[cacheIndex];
+        if (rollDetails == null || rollDetails.cycle() != cycle) {
+            rollDetails = new RollDetails(cycle, epoch);
+            cache[cacheIndex] = rollDetails;
+        }
+
+        WeakReference<WireStore> reference = stores.get(rollDetails);
+        WireStore store;
+        if (reference != null) {
+            store = reference.get();
+            if (store != null) {
+                if (store.tryReserve())
+                    return store;
+                else
+                    /// this should never happen,
+                    // this method is synchronized
+                    // and this remove below, is only any use if the acquire method below that fails
+                    Jvm.warn().on(getClass(), "Logic failure - should never happen " + store);
                 stores.remove(rollDetails);
+            }
         }
 
         store = this.supplier.acquire(cycle, createIfAbsent);
         if (store != null) {
-            store.reserve();
-            stores.put(rollDetails, store);
+            stores.put(rollDetails, new WeakReference<>(store));
             storeFileListener.onAcquired(cycle, store.file());
         }
         return store;
@@ -79,19 +106,23 @@ public class WireStorePool {
         return supplier.nextCycle(currentCycle, direction);
     }
 
-    public synchronized void release(@NotNull WireStore store) {
+    @Override
+    public synchronized void release(@NotNull CommonStore store) {
         store.release();
 
         long refCount = store.refCount();
         assert refCount >= 0;
         if (refCount == 0) {
-            for (Map.Entry<RollDetails, WireStore> entry : stores.entrySet()) {
-                if (entry.getValue() == store) {
+            for (Map.Entry<RollDetails, WeakReference<WireStore>> entry : stores.entrySet()) {
+                WeakReference<WireStore> ref = entry.getValue();
+                if (ref != null && ref.get() == store) {
                     stores.remove(entry.getKey());
                     storeFileListener.onReleased(entry.getKey().cycle(), store.file());
-                    break;
+                    return;
                 }
             }
+            if (Jvm.isDebugEnabled(getClass()))
+                Jvm.debug().on(getClass(), "Store was not registered: " + store.file());
         }
     }
 
@@ -104,5 +135,9 @@ public class WireStorePool {
      */
     public NavigableSet<Long> listCyclesBetween(int lowerCycle, int upperCycle) throws ParseException {
         return supplier.cycles(lowerCycle, upperCycle);
+    }
+
+    public boolean isEmpty() {
+        return stores.isEmpty();
     }
 }

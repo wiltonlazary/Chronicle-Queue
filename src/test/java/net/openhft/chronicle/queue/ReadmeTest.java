@@ -16,16 +16,20 @@
 
 package net.openhft.chronicle.queue;
 
+import net.openhft.chronicle.bytes.BytesUtil;
 import net.openhft.chronicle.core.OS;
 import net.openhft.chronicle.core.threads.ThreadDump;
+import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
+import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
+import net.openhft.chronicle.queue.impl.single.StoreComponentReferenceHandler;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 
-/**
- * Created by peter on 15/03/16.
+/*
+ * Created by Peter Lawrey on 15/03/16.
  */
 public class ReadmeTest {
     private ThreadDump threadDump;
@@ -33,6 +37,8 @@ public class ReadmeTest {
     @Before
     public void threadDump() {
         threadDump = new ThreadDump();
+        threadDump.ignore(StoreComponentReferenceHandler.THREAD_NAME);
+        threadDump.ignore(SingleChronicleQueue.DISK_SPACE_CHECKER_NAME);
     }
 
     @After
@@ -43,7 +49,7 @@ public class ReadmeTest {
     @Test
     public void createAQueue() {
         final String basePath = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
-        try (ChronicleQueue queue = ChronicleQueueBuilder.single(basePath)
+        try (ChronicleQueue queue = SingleChronicleQueueBuilder.single(basePath)
                 .testBlockSize()
                 .rollCycle(RollCycles.TEST_DAILY)
                 .build()) {
@@ -63,5 +69,10 @@ public class ReadmeTest {
 
             assertEquals("TestMessage", tailer.readText());
         }
+    }
+
+    @After
+    public void checkRegisteredBytes() {
+        BytesUtil.checkRegisteredBytes();
     }
 }

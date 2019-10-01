@@ -15,16 +15,17 @@
  */
 package net.openhft.chronicle.queue.impl.single;
 
-import net.openhft.chronicle.bytes.Bytes;
 import net.openhft.chronicle.bytes.MappedBytes;
 import net.openhft.chronicle.bytes.MappedFile;
 import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.core.Maths;
 import net.openhft.chronicle.core.ReferenceCounter;
 import net.openhft.chronicle.core.annotation.UsedViaReflection;
-import net.openhft.chronicle.core.io.IORuntimeException;
+import net.openhft.chronicle.core.io.Closeable;
 import net.openhft.chronicle.core.pool.ClassAliasPool;
 import net.openhft.chronicle.core.values.LongValue;
+import net.openhft.chronicle.core.values.TwoLongValue;
+import net.openhft.chronicle.queue.ChronicleQueue;
 import net.openhft.chronicle.queue.RollCycle;
 import net.openhft.chronicle.queue.impl.ExcerptContext;
 import net.openhft.chronicle.queue.impl.WireStore;
@@ -32,35 +33,32 @@ import net.openhft.chronicle.wire.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.EOFException;
 import java.io.File;
+import java.io.IOException;
 import java.io.StreamCorruptedException;
+import java.io.UncheckedIOException;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 public class SingleChronicleQueueStore implements WireStore {
     static {
         ClassAliasPool.CLASS_ALIASES.addAlias(SCQIndexing.class);
-        ClassAliasPool.CLASS_ALIASES.addAlias(SCQRoll.class, "Roll");
     }
 
     @NotNull
     final SCQIndexing indexing;
     @NotNull
-    private final WireType wireType;
-    @NotNull
-    private final SCQRoll roll;
-    @NotNull
     private final LongValue writePosition;
+    @NotNull
     private final MappedBytes mappedBytes;
+    @NotNull
     private final MappedFile mappedFile;
     @NotNull
     private final ReferenceCounter refCount;
-    private final StoreRecovery recovery;
+    @NotNull
+    private transient Sequence sequence;
 
-    private int deltaCheckpointInterval;
-    @Nullable
-    private LongValue lastAcknowledgedIndexReplicated;
+    private volatile Thread lastAccessedThread;
 
     /**
      * used by {@link net.openhft.chronicle.wire.Demarshallable}
@@ -68,41 +66,17 @@ public class SingleChronicleQueueStore implements WireStore {
      * @param wire a wire
      */
     @UsedViaReflection
-    private SingleChronicleQueueStore(WireIn wire) {
+    private SingleChronicleQueueStore(@NotNull WireIn wire) {
         assert wire.startUse();
         try {
-            this.wireType = wire.read(MetaDataField.wireType).object(WireType.class);
-            assert wireType != null;
-            this.writePosition = wire.newLongReference();
-            wire.read(MetaDataField.writePosition).int64(writePosition);
-            this.roll = wire.read(MetaDataField.roll).typedMarshallable();
-
+            writePosition = loadWritePosition(wire);
             this.mappedBytes = (MappedBytes) (wire.bytes());
             this.mappedFile = mappedBytes.mappedFile();
             this.refCount = ReferenceCounter.onReleased(this::onCleanup);
-            this.indexing = wire.read(MetaDataField.indexing).typedMarshallable();
-            assert indexing != null;
+            this.indexing = Objects.requireNonNull(wire.read(MetaDataField.indexing).typedMarshallable());
             this.indexing.writePosition = writePosition;
-
-            if (wire.bytes().readRemaining() > 0) {
-                this.lastAcknowledgedIndexReplicated = wire.read(MetaDataField.lastAcknowledgedIndexReplicated)
-                        .int64ForBinding(null);
-            } else {
-                this.lastAcknowledgedIndexReplicated = null; // disabled.
-            }
-            if (wire.bytes().readRemaining() > 0) {
-                this.recovery = wire.read(MetaDataField.recovery)
-                        .typedMarshallable();
-            } else {
-                this.recovery = new SimpleStoreRecovery(); // disabled.
-            }
-
-            if (wire.bytes().readRemaining() > 0) {
-                this.deltaCheckpointInterval = wire.read(MetaDataField.deltaCheckpointInterval)
-                        .int32();
-            } else {
-                this.deltaCheckpointInterval = -1; // disabled.
-            }
+            this.sequence = new RollCycleEncodeSequence(writePosition, rollIndexCount(), rollIndexSpacing());
+            this.indexing.sequence = sequence;
 
         } finally {
             assert wire.endUse();
@@ -110,27 +84,17 @@ public class SingleChronicleQueueStore implements WireStore {
     }
 
     /**
-     * @param rollCycle               the current rollCycle
-     * @param wireType                the wire type that is being used
-     * @param mappedBytes             used to mapped the data store file
-     * @param epoch                   sets an epoch offset as the number of number of milliseconds
-     *                                since
-     * @param indexCount              the number of entries in each index.
-     * @param indexSpacing            the spacing between indexed entries.
-     * @param recovery
-     * @param deltaCheckpointInterval
+     * @param rollCycle    the current rollCycle
+     * @param wireType     the wire type that is being used
+     * @param mappedBytes  used to mapped the data store file
+     * @param indexCount   the number of entries in each index.
+     * @param indexSpacing the spacing between indexed entries.
      */
-    public SingleChronicleQueueStore(@Nullable RollCycle rollCycle,
+    public SingleChronicleQueueStore(@NotNull RollCycle rollCycle,
                                      @NotNull final WireType wireType,
                                      @NotNull MappedBytes mappedBytes,
-                                     long epoch,
                                      int indexCount,
-                                     int indexSpacing,
-                                     StoreRecovery recovery,
-                                     int deltaCheckpointInterval) {
-        this.recovery = recovery;
-        this.roll = new SCQRoll(rollCycle, epoch);
-        this.wireType = wireType;
+                                     int indexSpacing) {
         this.mappedBytes = mappedBytes;
         this.mappedFile = mappedBytes.mappedFile();
         this.refCount = ReferenceCounter.onReleased(this::onCleanup);
@@ -139,54 +103,87 @@ public class SingleChronicleQueueStore implements WireStore {
         indexSpacing = Maths.nextPower2(indexSpacing, 1);
 
         this.indexing = new SCQIndexing(wireType, indexCount, indexSpacing);
-        this.indexing.writePosition = this.writePosition = wireType.newLongReference().get();
-        this.lastAcknowledgedIndexReplicated = wireType.newLongReference().get();
-        this.deltaCheckpointInterval = deltaCheckpointInterval;
+        this.indexing.writePosition = this.writePosition = wireType.newTwoLongReference().get();
+        this.indexing.sequence = this.sequence = new RollCycleEncodeSequence(writePosition,
+                rollCycle.defaultIndexCount(),
+                rollCycle.defaultIndexSpacing());
     }
 
-    public static void dumpStore(Wire wire) {
-        Bytes<?> bytes = wire.bytes();
-        bytes.readPositionUnlimited(0);
-        Jvm.debug().on(SingleChronicleQueueStore.class, Wires.fromSizePrefixedBlobs(wire));
+    @NotNull
+    public static String dump(@NotNull String directoryFilePath) {
+        return ChronicleQueue.singleBuilder(directoryFilePath).build().dump();
     }
 
-    public static String dump(String directoryFilePath) {
-        SingleChronicleQueue q = SingleChronicleQueueBuilder.binary(directoryFilePath).build();
-        return q.dump();
+    private static WireOut intForBinding(ValueOut wireOut, final LongValue value) {
+        return value instanceof TwoLongValue ?
+                wireOut.int128forBinding(0L, 0L, (TwoLongValue) value) :
+                wireOut.int64forBinding(0L, value);
+
     }
 
-    /**
-     * @return the type of wire used
-     */
-    @Override
-    public WireType wireType() {
-        return wireType;
+    private LongValue loadWritePosition(@NotNull WireIn wire) {
+
+        final ValueIn read = wire.read(MetaDataField.writePosition);
+
+        final int code;
+        final long start = wire.bytes().readPosition();
+
+        try {
+            wire.consumePadding();
+            code = wire.bytes().uncheckedReadUnsignedByte();
+        } finally {
+            wire.bytes().readPosition(start);
+        }
+
+        if (code == BinaryWireCode.I64_ARRAY) {
+            TwoLongValue result = wire.newTwoLongReference();
+            // when the write position is and array it also encodes the sequence number in the write position as the second long value
+            read.int128(result);
+            return result;
+        }
+
+        final LongValue result = wire.newLongReference();
+        read.int64(result);
+        return result;
+
     }
 
+    @NotNull
     @Override
     public File file() {
-        return mappedFile == null ? null : mappedFile.file();
+        return mappedFile.file();
     }
 
-    /**
-     * when using replication to another host, this is the last index that has been confirmed to *
-     * have been read by the remote host.
-     */
-    public long lastAcknowledgedIndexReplicated() {
-        return lastAcknowledgedIndexReplicated == null ? -1 : lastAcknowledgedIndexReplicated.getVolatileValue();
-    }
-
-    public void lastAcknowledgedIndexReplicated(long newValue) {
-        if (lastAcknowledgedIndexReplicated != null)
-            lastAcknowledgedIndexReplicated.setMaxValue(newValue);
-    }
-
+    @NotNull
     @Override
     public String dump() {
+        return dump(false);
+    }
 
+    @NotNull
+    @Override
+    public String shortDump() {
+        return dump(true);
+    }
+
+    private String dump(boolean abbrev) {
         MappedBytes bytes = MappedBytes.mappedBytes(mappedFile);
         try {
             bytes.readLimit(bytes.realCapacity());
+            return Wires.fromSizePrefixedBlobs(bytes, abbrev);
+        } finally {
+            bytes.release();
+        }
+    }
+
+    @Override
+    public String dumpHeader() {
+        MappedBytes bytes = MappedBytes.mappedBytes(mappedFile);
+        try {
+            int size = bytes.readInt(0);
+            if (!Wires.isReady(size))
+                return "not ready";
+            bytes.readLimit(Wires.lengthOf(size) + 4);
             return Wires.fromSizePrefixedBlobs(bytes);
         } finally {
             bytes.release();
@@ -198,25 +195,14 @@ public class SingleChronicleQueueStore implements WireStore {
         return this.writePosition.getVolatileValue();
     }
 
+    @NotNull
     @Override
     public WireStore writePosition(long position) {
-
+        assert singleThreadedAccess();
         assert writePosition.getVolatileValue() + mappedFile.chunkSize() > position;
-        int header = mappedBytes.readVolatileInt(position);
-        if (Wires.isReadyData(header))
-            writePosition.setMaxValue(position);
-        else
-            throw new AssertionError();
+        assert Wires.isReadyData(mappedBytes.readVolatileInt(position));
+        writePosition.setMaxValue(position);
         return this;
-    }
-
-    /**
-     * @return an epoch offset as the number of number of milliseconds since January 1, 1970,
-     * 00:00:00 GMT
-     */
-    @Override
-    public long epoch() {
-        return this.roll.epoch();
     }
 
     /**
@@ -226,13 +212,19 @@ public class SingleChronicleQueueStore implements WireStore {
      * @param index the index we wish to move to
      * @return whether the index was found for reading.
      */
+    @Nullable
     @Override
     public ScanResult moveToIndexForRead(@NotNull ExcerptContext ec, long index) {
         try {
-            return indexing.moveToIndex(recovery, ec, index);
-        } catch (UnrecoverableTimeoutException | StreamCorruptedException e) {
+            return indexing.moveToIndex(ec, index);
+        } catch (@NotNull UnrecoverableTimeoutException e) {
             return ScanResult.NOT_REACHED;
         }
+    }
+
+    @Override
+    public long moveToEndForRead(@NotNull Wire w) {
+        return indexing.moveToEnd(w);
     }
 
     @Override
@@ -250,6 +242,12 @@ public class SingleChronicleQueueStore implements WireStore {
         return this.refCount.get();
     }
 
+    @Override
+    public boolean tryReserve() {
+        return this.refCount.tryReserve();
+    }
+
+    @Override
     public void close() {
         while (refCount.get() > 0) {
             refCount.release();
@@ -267,52 +265,51 @@ public class SingleChronicleQueueStore implements WireStore {
     }
 
     @Override
-    public long sequenceForPosition(final ExcerptContext ec, final long position, boolean inclusive) throws
+    public long sequenceForPosition(@NotNull final ExcerptContext ec, final long position, boolean inclusive) throws
             UnrecoverableTimeoutException, StreamCorruptedException {
-        return indexing.sequenceForPosition(recovery, ec, position, inclusive);
+        return indexing.sequenceForPosition(ec, position, inclusive);
     }
 
     @Override
-    public long lastSequenceNumber(ExcerptContext ec) throws StreamCorruptedException {
-        return indexing.lastSequenceNumber(recovery, ec);
+    public long lastSequenceNumber(@NotNull ExcerptContext ec) throws StreamCorruptedException {
+        return indexing.lastSequenceNumber(ec);
     }
 
+    @NotNull
     @Override
     public String toString() {
         return "SingleChronicleQueueStore{" +
                 "indexing=" + indexing +
-                ", wireType=" + wireType +
-                ", checkpointInterval=" + this.deltaCheckpointInterval +
-                ", roll=" + roll +
-                ", writePosition=" + writePosition +
+                ", writePosition/seq=" + writePosition.toString() +
                 ", mappedFile=" + mappedFile +
                 ", refCount=" + refCount +
-                ", lastAcknowledgedIndexReplicated=" + lastAcknowledgedIndexReplicated +
                 '}';
-    }
-
-    private void onCleanup() {
-        mappedBytes.release();
     }
 
     // *************************************************************************
     // Marshalling
     // *************************************************************************
 
+    private void onCleanup() {
+        Closeable.closeQuietly(writePosition);
+        Closeable.closeQuietly(indexing);
+        mappedBytes.release();
+    }
+
     @Override
     public void writeMarshallable(@NotNull WireOut wire) {
-        if (lastAcknowledgedIndexReplicated == null)
-            lastAcknowledgedIndexReplicated = wire.newLongReference();
-
-        wire.write(MetaDataField.wireType).object(wireType)
-                .writeAlignTo(8, 0).write(MetaDataField.writePosition).int64forBinding(0L, writePosition)
-                .write(MetaDataField.roll).typedMarshallable(this.roll)
-                .write(MetaDataField.indexing).typedMarshallable(this.indexing)
-                .write(MetaDataField.lastAcknowledgedIndexReplicated)
-                .int64forBinding(-1L, lastAcknowledgedIndexReplicated);
-        wire.write(MetaDataField.recovery).typedMarshallable(recovery);
-        wire.write(MetaDataField.deltaCheckpointInterval).int32(this.deltaCheckpointInterval);
+        ValueOut wireOut = wire.write(MetaDataField.writePosition);
+        intForBinding(wireOut, writePosition).write(MetaDataField.indexing).typedMarshallable(this.indexing);
         wire.padToCacheAlign();
+    }
+
+    @Override
+    public void initIndex(@NotNull Wire wire) {
+        try {
+            indexing.initIndex(wire);
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     @Override
@@ -321,59 +318,72 @@ public class SingleChronicleQueueStore implements WireStore {
     }
 
     @Override
-    public void setPositionForSequenceNumber(final ExcerptContext ec, long sequenceNumber,
+    public void setPositionForSequenceNumber(@NotNull final ExcerptContext ec, long sequenceNumber,
                                              long position)
             throws UnrecoverableTimeoutException, StreamCorruptedException {
+
+        sequence.setSequence(sequenceNumber, position);
+
         long nextSequence = indexing.nextEntryToBeIndexed();
         if (nextSequence > sequenceNumber)
             return;
 
-        try {
-            indexing.setPositionForSequenceNumber(recovery, ec,
-                    sequenceNumber, position);
+        indexing.setPositionForSequenceNumber(ec, sequenceNumber, position);
 
-        } catch (EOFException ignored) {
-            // todo unable to add an index to a rolled store.
-        }
     }
 
     @Override
-    public long writeHeader(Wire wire, int length, long timeoutMS) throws EOFException, UnrecoverableTimeoutException {
-        return recovery.writeHeader(wire, length, timeoutMS, writePosition);
+    public ScanResult linearScanTo(final long index, final long knownIndex, final ExcerptContext ec, final long knownAddress) {
+        return indexing.linearScanTo(index, knownIndex, ec, knownAddress);
     }
 
     @Override
-    public void writeEOF(Wire wire, long timeoutMS) throws TimeoutException {
+    public boolean writeEOF(@NotNull Wire wire, long timeoutMS) {
+        String fileName = mappedFile.file().getAbsolutePath();
+
         // just in case we are about to release this
         if (wire.bytes().tryReserve()) {
-            wire.writeEndOfWire(timeoutMS, TimeUnit.MILLISECONDS, writePosition());
-            wire.bytes().release();
-        } else {
-            Jvm.debug().on(getClass(), "Tried to writeEOF to as it was being closed");
+            try {
+                return writeEOFAndShrink(wire, timeoutMS);
+
+            } finally {
+                wire.bytes().release();
+            }
+        }
+
+        try (MappedBytes bytes = MappedBytes.mappedBytes(mappedFile.file(), mappedFile.chunkSize())) {
+            Wire wire0 = WireType.valueOf(wire).apply(bytes);
+            return writeEOFAndShrink(wire0, timeoutMS);
+
+        } catch (Exception e) {
+            Jvm.warn().on(getClass(), "unable to write the EOF file=" + fileName, e);
+            return false;
         }
     }
 
-    @Override
-    public int deltaCheckpointInterval() {
-        return deltaCheckpointInterval;
-    }
-
-    enum MetaDataField implements WireKey {
-        wireType,
-        writePosition,
-        roll,
-        indexing,
-        lastAcknowledgedIndexReplicated,
-        recovery,
-        deltaCheckpointInterval;
-
-        @Nullable
-        @Override
-        public Object defaultValue() {
-            throw new IORuntimeException("field " + name() + " required");
+    boolean writeEOFAndShrink(@NotNull Wire wire, long timeoutMS) {
+        if (wire.writeEndOfWire(timeoutMS, TimeUnit.MILLISECONDS, writePosition())) {
+            // only if we just written EOF
+            QueueFileShrinkManager.scheduleShrinking(mappedFile.file(), wire.bytes().writePosition());
+            System.out.println("Shrunk file " + mappedFile.file());
+            return true;
         }
+        return false;
     }
 
+    int rollIndexCount() {
+        return indexing.indexCount();
+    }
 
+    int rollIndexSpacing() {
+        return indexing.indexSpacing();
+    }
+
+    private synchronized boolean singleThreadedAccess() {
+        if (lastAccessedThread == null) {
+            lastAccessedThread = Thread.currentThread();
+        }
+        return lastAccessedThread == Thread.currentThread();
+    }
 }
 

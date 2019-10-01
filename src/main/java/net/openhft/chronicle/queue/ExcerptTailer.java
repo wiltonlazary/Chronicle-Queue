@@ -23,7 +23,8 @@ import net.openhft.chronicle.wire.SourceContext;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The component that facilitates sequentially reading data from a {@link ChronicleQueue}.
+ * <p>The component that facilitates sequentially reading data from a {@link ChronicleQueue}.</p>
+ * <p><b>NOTE:</b> Tailers are NOT thread-safe, sharing the Tailer between threads will lead to errors and unpredictable behaviour.</p>
  *
  * @author peter.lawrey
  */
@@ -32,25 +33,40 @@ public interface ExcerptTailer extends ExcerptCommon<ExcerptTailer>, Marshallabl
     /**
      * equivalent to {@link  ExcerptTailer#readDocument(ReadMarshallable)} but with out the use of a
      * lambda expression.
-     *
+     * <p>
      * This method is the ExcerptTailer equivalent of {@link net.openhft.chronicle.wire.WireIn#readingDocument()}
      *
      * @return the document context
      */
+    @Override
+    @NotNull
     default DocumentContext readingDocument() {
         return readingDocument(false);
     }
 
+    @NotNull
     DocumentContext readingDocument(boolean includeMetaData);
 
     /**
-     * @return the index just read, this include the cycle and the sequence number from with this
-     * cycle
+     * peekDocument() can be used after a message has been found by toStart() or readingDocument().
+     * Until then only readingDocument() will find the first cycle.
+     *
+     * @return true if readingDocument() should be called, false if most likely it's not needed.
      */
+    default boolean peekDocument() {
+        return true;
+    }
+
+    /**
+     * @return if called while within the <code>try (tailer.readingDocument){ }</code> block, returns index of current reading document.
+     * Otherwise, the next index to read.
+     * Index includes the cycle and the sequence number in that cycle
+     */
+    @Override
     long index();
 
     /**
-     * @return the cycle this appender is on, usually with chronicle-queue each cycle will have its
+     * @return the cycle this tailer is on, usually with chronicle-queue each cycle will have its
      * own unique data file to store the excerpt
      */
     int cycle();
@@ -58,8 +74,7 @@ public interface ExcerptTailer extends ExcerptCommon<ExcerptTailer>, Marshallabl
     /**
      * Randomly select an Excerpt.
      *
-     * @param index index to look up, the index includes the cycle number and a sequence number from
-     *              with this cycle
+     * @param index index to look up, the index includes the cycle number and a sequence number from with this cycle
      * @return true if this is a valid entries.
      */
     boolean moveToIndex(long index);
@@ -73,23 +88,35 @@ public interface ExcerptTailer extends ExcerptCommon<ExcerptTailer>, Marshallabl
     ExcerptTailer toStart();
 
     /**
-     * Wind to the last entry int eh last entry <p> If the direction() == FORWARD, this will be 1
-     * more than the last entry.<br/>Otherwise the index will be the last entry. </p>
-     *
+     * Wind to the last entry in the last cycle
+     * <p> If the direction() == FORWARD, this will be 1 more than the last entry.
+     * <br/>Otherwise the index will be the last entry. </p>
+     * <p>
      * This is not atomic with the appenders, in other words if a cycle has been added in the
      * current millisecond, toEnd() may not see it, This is because for performance reasons, the
      * queue.lastCycle() is cached, as finding the last cycle is expensive, it requires asking the
      * directory for the Files.list() so, this cache is only refreshed if the call toEnd() is in a
      * new millisecond. Hence a whole milliseconds with of data could be added to the
-     * chronicle-queue that toEnd() won’t see. For appenders that that are on the same
-     * JVM, they can be informed that the last cycle has changed, this
-     * will yield better results, but atomicity can still not be guaranteed.
+     * chronicle-queue that toEnd() won’t see. For appenders that that are using the same queue
+     * instance ( and with then same JVM ), they can be informed that the last cycle has
+     * changed, this will yield better results, but atomicity can still not be guaranteed.
      *
-     * @return this Excerpt
+     * @return this ExcerptTailer
      */
     @NotNull
     ExcerptTailer toEnd();
 
+    /**
+     * When striding is enabled AND direction is BACKWARD, skip to the entries easiest to find, doesn't need to be every entry.
+     * @param striding skip to the indexStride if that is easy, doesn't always happen.
+     * @return this ExcerptTailer
+     */
+    ExcerptTailer striding(boolean striding);
+
+    /**
+     * @return whether striding is enabled.
+     */
+    boolean striding();
     /**
      * @return the direction of movement after reading an entry.
      */
@@ -101,6 +128,7 @@ public interface ExcerptTailer extends ExcerptCommon<ExcerptTailer>, Marshallabl
      * @param direction NONE, FORWARD, BACKWARD
      * @return this
      */
+    @NotNull
     ExcerptTailer direction(TailerDirection direction);
 
     /**
@@ -110,15 +138,32 @@ public interface ExcerptTailer extends ExcerptCommon<ExcerptTailer>, Marshallabl
      * @return this ExcerptTailer
      * @throws IORuntimeException if the queue couldn't be wound to the last index.
      */
+    @NotNull
     ExcerptTailer afterLastWritten(ChronicleQueue queue) throws IORuntimeException;
 
+    /**
+     * Enterprise Queue only: if replication enabled, setting this to true on a source queue ensures that
+     * this tailer will not read until at least one of the sinks has acknowledged receipt of the excerpt.
+     * This will block forever if no sinks acknowledge receipt.
+     * @param readAfterReplicaAcknowledged enable
+     */
     default void readAfterReplicaAcknowledged(boolean readAfterReplicaAcknowledged) {
-
     }
 
     default boolean readAfterReplicaAcknowledged() {
         return false;
     }
 
+    @NotNull
     TailerState state();
+
+    /**
+     * A task that will be run if a WeakReference referring this appender is registered with a clean-up task.
+     *
+     * @return Task to release any associated resources
+     */
+    default Runnable getCloserJob() {
+        return () -> {
+        };
+    }
 }

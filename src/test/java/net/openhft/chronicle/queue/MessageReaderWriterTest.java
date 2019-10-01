@@ -16,14 +16,16 @@
 
 package net.openhft.chronicle.queue;
 
+import net.openhft.chronicle.core.annotation.RequiredForClient;
+import net.openhft.chronicle.bytes.MethodReader;
 import net.openhft.chronicle.core.pool.ClassAliasPool;
 import net.openhft.chronicle.core.threads.ThreadDump;
 import net.openhft.chronicle.core.util.ObjectUtils;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
-import net.openhft.chronicle.queue.impl.single.Utils;
+import net.openhft.chronicle.queue.impl.single.StoreComponentReferenceHandler;
 import net.openhft.chronicle.wire.AbstractMarshallable;
-import net.openhft.chronicle.wire.MethodReader;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,15 +35,18 @@ import java.io.File;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-/**
- * Created by Peter on 25/03/2016.
+/*
+ * Created by Peter Lawrey on 25/03/2016.
  */
+@RequiredForClient
 public class MessageReaderWriterTest {
     private ThreadDump threadDump;
 
     @Before
     public void threadDump() {
         threadDump = new ThreadDump();
+        threadDump.ignore(StoreComponentReferenceHandler.THREAD_NAME);
+        threadDump.ignore(SingleChronicleQueue.DISK_SPACE_CHECKER_NAME);
     }
 
     @After
@@ -54,14 +59,14 @@ public class MessageReaderWriterTest {
         ClassAliasPool.CLASS_ALIASES.addAlias(Message1.class);
         ClassAliasPool.CLASS_ALIASES.addAlias(Message2.class);
 
-        File path1 = Utils.tempDir("testWriteWhileReading1");
-        File path2 = Utils.tempDir("testWriteWhileReading2");
+        File path1 = DirectoryUtils.tempDir("testWriteWhileReading1");
+        File path2 = DirectoryUtils.tempDir("testWriteWhileReading2");
 
-        try (SingleChronicleQueue queue1 = SingleChronicleQueueBuilder
+        try (ChronicleQueue queue1 = SingleChronicleQueueBuilder
                 .binary(path1)
                 .testBlockSize()
                 .build();
-             SingleChronicleQueue queue2 = SingleChronicleQueueBuilder
+             ChronicleQueue queue2 = SingleChronicleQueueBuilder
                      .binary(path2)
                      .testBlockSize()
                      .build()) {
@@ -120,13 +125,13 @@ public class MessageReaderWriterTest {
         }
 
         @Override
-        public void method1(Message1 message) {
+        public void method1(@NotNull Message1 message) {
             message.text += "-processed";
             writer2.method1(message);
         }
 
         @Override
-        public void method2(Message2 message) {
+        public void method2(@NotNull Message2 message) {
             message.number += 1000;
             writer2.method2(message);
         }

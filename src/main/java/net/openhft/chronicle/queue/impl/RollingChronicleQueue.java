@@ -15,18 +15,16 @@
  */
 package net.openhft.chronicle.queue.impl;
 
-import net.openhft.chronicle.core.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 import net.openhft.chronicle.queue.ChronicleQueue;
 import net.openhft.chronicle.queue.RollCycle;
 import net.openhft.chronicle.queue.TailerDirection;
-import net.openhft.chronicle.queue.impl.single.StoreRecovery;
-import net.openhft.chronicle.wire.WireType;
+import net.openhft.chronicle.queue.impl.single.QueueLock;
 import org.jetbrains.annotations.NotNull;
 
 import java.text.ParseException;
-import java.util.function.Function;
 
-public interface RollingChronicleQueue extends ChronicleQueue {
+public interface RollingChronicleQueue extends ChronicleQueue, StoreReleasable {
 
     long epoch();
 
@@ -42,11 +40,6 @@ public interface RollingChronicleQueue extends ChronicleQueue {
     WireStore storeForCycle(int cycle, final long epoch, boolean createIfAbsent);
 
     /**
-     * @param store the {@code store} to release
-     */
-    void release(WireStore store);
-
-    /**
      * @return the first cycle number found, or Integer.MAX_VALUE is none found.
      */
     int firstCycle();
@@ -55,6 +48,13 @@ public interface RollingChronicleQueue extends ChronicleQueue {
      * @return the lastCycle available or Integer.MIN_VALUE if none is found.
      */
     int lastCycle();
+
+    /**
+     * Counts the number of messages in this queue instance.
+     *
+     * @return the number of document excerpts
+     */
+    long entryCount();
 
     /**
      * the next available cycle, no cycle will be created by this method, this method is typically
@@ -69,16 +69,16 @@ public interface RollingChronicleQueue extends ChronicleQueue {
     /**
      * The number of excerpts between the indexes, {@code fromIndex} inclusive, {@code toIndex}
      * exclusive.
-     *
+     * <p>
      * When {@code fromIndex} and {@code toIndex} are in different cycles which are not adjacent, this
      * operation can be expensive, as the index count for each intermediate cycle has to be found
      * and calculated. As such, and in this situation, it's not recommended to call this method
      * regularly in latency sensitive systems.
      *
      * @param fromIndex from index, the index provided must exist.  To improve performance no checking
-     *               is  carried out to validate if an excerpt exists at this index. ( inclusive )
-     * @param toIndex to index, the index provided must exist. To improve performance no checking is
-     *               carried out to validate if an excerpt exists at this index. ( exclusive )
+     *                  is carried out to validate if an excerpt exists at this index. ( inclusive )
+     * @param toIndex   to index, the index provided must exist. To improve performance no checking is
+     *                  carried out to validate if an excerpt exists at this index. ( exclusive )
      * @return the number of excerpts between the indexes, {@code index1} inclusive, {@code index2}
      * exclusive.
      * @throws java.lang.IllegalStateException if the cycle of {@code fromIndex} or {@code toIndex} can
@@ -101,12 +101,13 @@ public interface RollingChronicleQueue extends ChronicleQueue {
      */
     int indexSpacing();
 
+    @NotNull
     RollCycle rollCycle();
-
-    Function<WireType, StoreRecovery> recoverySupplier();
 
     /**
      * @return the checkpointInterval used by delta wire
      */
     int deltaCheckpointInterval();
+
+    QueueLock queueLock();
 }

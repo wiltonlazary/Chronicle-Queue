@@ -1,31 +1,33 @@
 package net.openhft.chronicle.queue.impl.single;
 
+import net.openhft.chronicle.bytes.Bytes;
+import net.openhft.chronicle.bytes.MappedFile;
+import net.openhft.chronicle.core.time.SetTimeProvider;
 import net.openhft.chronicle.core.time.TimeProvider;
-import net.openhft.chronicle.queue.ExcerptAppender;
-import net.openhft.chronicle.queue.ExcerptTailer;
-import net.openhft.chronicle.queue.RollCycles;
+import net.openhft.chronicle.queue.*;
 import net.openhft.chronicle.queue.impl.StoreFileListener;
-import net.openhft.chronicle.queue.impl.WireStore;
 import net.openhft.chronicle.wire.DocumentContext;
 import net.openhft.chronicle.wire.Wires;
+import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class RollCycleTest {
     @Test
     public void newRollCycleIgnored() throws Exception {
-        File path = Utils.tempDir("newRollCycleIgnored");
-        TestTimeProvider timeProvider = new TestTimeProvider();
+        File path = DirectoryUtils.tempDir("newRollCycleIgnored");
+        SetTimeProvider timeProvider = new SetTimeProvider();
         ParallelQueueObserver observer = new ParallelQueueObserver(timeProvider, path.toPath());
 
-        try (SingleChronicleQueue queue = SingleChronicleQueueBuilder
+        try (ChronicleQueue queue = SingleChronicleQueueBuilder
                 .fieldlessBinary(path)
                 .testBlockSize()
                 .rollCycle(RollCycles.DAILY)
@@ -39,59 +41,67 @@ public class RollCycleTest {
             observer.await();
 
             // two days pass
-            timeProvider.add(TimeUnit.DAYS.toMillis(2));
+            timeProvider.advanceMillis(TimeUnit.DAYS.toMillis(2));
 
-            appender.writeText("Day 3 data");
+            appender.writeText("0");
 
             // allow parallel tailer to finish iteration
-            Thread.sleep(2000);
+            for (int i = 0; i < 5_000 && observer.documentsRead != 1; i++) {
+                timeProvider.advanceMicros(100);
+                Thread.sleep(1);
+            }
 
             thread.interrupt();
         }
 
         assertEquals(1, observer.documentsRead);
+        observer.queue.close();
     }
 
     @Test
     public void newRollCycleIgnored2() throws Exception {
-        File path = Utils.tempDir("newRollCycleIgnored2");
+        File path = DirectoryUtils.tempDir("newRollCycleIgnored2");
 
-        TestTimeProvider timeProvider = new TestTimeProvider();
+        SetTimeProvider timeProvider = new SetTimeProvider();
         ParallelQueueObserver observer = new ParallelQueueObserver(timeProvider, path.toPath());
 
-        try (SingleChronicleQueue queue = SingleChronicleQueueBuilder.fieldlessBinary(path)
+        int cyclesToWrite = 100;
+        try (ChronicleQueue queue = SingleChronicleQueueBuilder.fieldlessBinary(path)
                 .testBlockSize()
                 .rollCycle(RollCycles.DAILY)
                 .timeProvider(timeProvider)
                 .build()) {
             ExcerptAppender appender = queue.acquireAppender();
-            // uncomment next line to make the test pass
-            appender.writeText("Day 1 data");
+            appender.writeText("0");
 
             Thread thread = new Thread(observer);
             thread.start();
 
             observer.await();
 
-            // two days pass
-            timeProvider.add(TimeUnit.DAYS.toMillis(2));
-
-            appender.writeText("Day 3 data");
+            for (int i = 1; i <= cyclesToWrite; i++) {
+                // two days pass
+                timeProvider.advanceMillis(TimeUnit.DAYS.toMillis(2));
+                appender.writeText(Integer.toString(i));
+            }
 
             // allow parallel tailer to finish iteration
-            Thread.sleep(2000);
+            for (int i = 0; i < 5_000 && observer.documentsRead != 1 + cyclesToWrite; i++) {
+                Thread.sleep(1);
+            }
 
             thread.interrupt();
         }
 
-        assertEquals(2, observer.documentsRead);
+        assertEquals(1 + cyclesToWrite, observer.documentsRead);
+        observer.queue.close();
     }
 
     @Test
-    public void testWriteToCorruptedFile() throws Exception {
+    public void testWriteToCorruptedFile() {
 
-        File dir = Utils.tempDir("testWriteToCorruptedFile");
-        try (SingleChronicleQueue queue = SingleChronicleQueueBuilder
+        File dir = DirectoryUtils.tempDir("testWriteToCorruptedFile");
+        try (ChronicleQueue queue = SingleChronicleQueueBuilder
                 .binary(dir)
                 .testBlockSize()
                 .rollCycle(RollCycles.TEST_DAILY)
@@ -99,53 +109,45 @@ public class RollCycleTest {
 
             ExcerptAppender appender = queue.acquireAppender();
 
-            long index;
             try (DocumentContext dc = appender.writingDocument()) {
                 dc.wire().write().text("hello world");
-                index = dc.index();
+            }
+            Bytes bytes;
+            long pos;
+            try (DocumentContext dc = appender.writingDocument()) {
+                bytes = dc.wire().bytes();
+                pos = bytes.writePosition() - 4;
             }
 
-            WireStore wireStore = queue.storeForCycle(queue.rollCycle().toCycle(index), 0, false);
+            // write as not complete.
+            bytes.writeInt(pos, Wires.NOT_COMPLETE_UNKNOWN_LENGTH);
 
-            try (FileOutputStream fileOutputStream = new FileOutputStream(wireStore.file(), true)) {
-                fileOutputStream.write(Wires.NOT_COMPLETE_UNKNOWN_LENGTH);
-                fileOutputStream.flush();
-
-            }
-
-            Thread.sleep(1000);
             try (DocumentContext dc = appender.writingDocument()) {
                 dc.wire().write().text("hello world 2");
             }
 
             try (DocumentContext dc = appender.writingDocument()) {
-                dc.wire().write().text("hello world 2");
+                dc.wire().write().text("hello world 3");
             }
-
         }
     }
 
-    class TestTimeProvider implements TimeProvider {
+    @After
+    public void checkMappedFiles() {
+        MappedFile.checkMappedFiles();
+    }
 
-        volatile long add = 0;
-
-        @Override
-        public long currentTimeMillis() {
-            return System.currentTimeMillis() + add;
-        }
-
-        public void add(long addInMs) {
-            add += addInMs;
-        }
-
+    @After
+    public void clearInterrupt() {
+        Thread.interrupted();
     }
 
     class ParallelQueueObserver implements Runnable, StoreFileListener {
-        SingleChronicleQueue queue;
+        ChronicleQueue queue;
         CountDownLatch progressLatch;
-        int documentsRead;
+        volatile int documentsRead;
 
-        public ParallelQueueObserver(TimeProvider timeProvider, Path path) {
+        public ParallelQueueObserver(TimeProvider timeProvider, @NotNull Path path) {
             queue = SingleChronicleQueueBuilder.fieldlessBinary(path.toFile())
                     .testBlockSize()
                     .rollCycle(RollCycles.DAILY)
@@ -164,12 +166,16 @@ public class RollCycleTest {
 
             progressLatch.countDown();
 
+            int lastDocId = -1;
             while (!Thread.currentThread().isInterrupted()) {
 
                 String readText = tailer.readText();
                 if (readText != null) {
                     System.out.println("Read a document " + readText);
                     documentsRead++;
+                    int docId = Integer.parseInt(readText);
+                    assertTrue(docId == lastDocId + 1);
+                    lastDocId = docId;
                 }
             }
         }

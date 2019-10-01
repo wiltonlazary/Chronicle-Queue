@@ -19,29 +19,29 @@ package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.core.OS;
+import net.openhft.chronicle.core.annotation.RequiredForClient;
 import net.openhft.chronicle.core.io.IORuntimeException;
 import net.openhft.chronicle.core.io.IOTools;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@RequiredForClient
 public class ChronicleRollingIssueTest {
 
-    @Ignore
     @Test
-    public void test() throws Exception {
+    public void test() {
         int threads = Runtime.getRuntime().availableProcessors() - 1;
-        int messages = 50;
+        int messages = 20;
 
         String path = OS.TARGET + "/" + getClass().getSimpleName() + "-" + System.nanoTime();
         AtomicInteger count = new AtomicInteger();
 
         Runnable appendRunnable = () -> {
-            try (final ChronicleQueue writeQueue = ChronicleQueueBuilder
-                    .single(path)
+            try (final ChronicleQueue writeQueue = ChronicleQueue
+                    .singleBuilder(path)
                     .testBlockSize()
                     .rollCycle(RollCycles.TEST_SECONDLY).build()) {
                 for (int i = 0; i < messages; i++) {
@@ -63,8 +63,8 @@ public class ChronicleRollingIssueTest {
         }
         long start = System.currentTimeMillis();
         long lastIndex = 0;
-        try (final ChronicleQueue queue = ChronicleQueueBuilder
-                .single(path)
+        try (final ChronicleQueue queue = ChronicleQueue
+                .singleBuilder(path)
                 .testBlockSize()
                 .rollCycle(RollCycles.TEST_SECONDLY).build()) {
             ExcerptTailer tailer = queue.createTailer();
@@ -82,9 +82,7 @@ public class ChronicleRollingIssueTest {
                         lastIndex = index;
                     }
                 }
-                final int i = count.get();
                 if (System.currentTimeMillis() > start + 60000) {
-//                    System.out.println(queue.dump());
                     throw new AssertionError("Wrote: " + count
                             + " read: " + count2
                             + " index: " + Long.toHexString(index));

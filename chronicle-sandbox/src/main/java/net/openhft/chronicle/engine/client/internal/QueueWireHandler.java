@@ -23,10 +23,8 @@ import net.openhft.chronicle.engine.client.ClientWiredStatelessTcpConnectionHub;
 import net.openhft.chronicle.engine.client.internal.ClientWiredChronicleQueueStateless.EventId;
 import net.openhft.chronicle.network.event.EventGroup;
 import net.openhft.chronicle.queue.ChronicleQueue;
-import net.openhft.chronicle.queue.ChronicleQueueBuilder;
 import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
-import net.openhft.chronicle.wire.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-/**
+/*
  * Created by Rob Austin
  */
 public class QueueWireHandler implements WireHandler, Consumer<WireHandlers> {
@@ -93,81 +91,80 @@ public class QueueWireHandler implements WireHandler, Consumer<WireHandlers> {
                 }, dataWireIn -> {
                     ValueIn vin = inWire.readEventName(eventName);
 
-        try {
-            // writes out the tid
-            outWire.writeDocument(true, wire -> outWire.write(CoreFields.tid).int64(tid));
+                    try {
+                        // writes out the tid
+                        outWire.writeDocument(true, wire -> outWire.write(CoreFields.tid).int64(tid));
 
-            if (EventId.lastWrittenIndex.contentEquals(eventName)) {
-                writeData(wireOut -> wireOut.write(CoreFields.reply).int64(queue.lastWrittenIndex()));
+                        if (EventId.lastWrittenIndex.contentEquals(eventName)) {
+                            writeData(wireOut -> wireOut.write(CoreFields.reply).int64(queue.lastWrittenIndex()));
 
-            } else if (EventId.createAppender.contentEquals(eventName)) {
-                //only need one appender per queue
-                queueToAppender.computeIfAbsent(queue,
-                        s -> {
-                            try {
-                                return queue.createAppender();
-                            } catch (IOException e) {
-                                e.printStackTrace();
+                        } else if (EventId.createAppender.contentEquals(eventName)) {
+                            //only need one appender per queue
+                            queueToAppender.computeIfAbsent(queue,
+                                    s -> {
+                                        try {
+                                            return queue.createAppender();
+                                        } catch (IOException e) {
+                                            e.printStackTrace();
+                                        }
+                                        return null;
+                                    });
+
+                            outWire.writeDocument(false, wireOut -> {
+                                QueueAppenderResponse qar = new QueueAppenderResponse();
+                                qar.setCid(cid);
+                                qar.setCsp(cspText);
+                                wireOut.write(CoreFields.reply).typedMarshallable(qar);
+                            });
+
+                        } else if (EventId.submit.contentEquals(eventName)) {
+                            ExcerptAppender appender = queueToAppender.get(queue);
+                            appender.writeDocument(wo -> wo.bytes().write(vin.bytes()));
+
+                            outWire.writeDocument(false, wire -> wire.write(EventId.index).int64(appender.lastWrittenIndex()));
+
+                        } else if (EventId.createTailer.contentEquals(eventName)) {
+                            //only need one appender per queue
+                            queueToTailer.computeIfAbsent(queue,
+                                    s -> {
+                                        try {
+                                            return queue.createTailer();
+                                        } catch (IOException e) {
+                                            e.printStackTrace();
+                                        }
+                                        return null;
+                                    });
+
+                            outWire.writeDocument(false, wireOut -> {
+                                QueueTailerResponse qar = new QueueTailerResponse();
+                                qar.setCid(cid);
+                                qar.setCsp(cspText);
+                                wireOut.write(CoreFields.reply).typedMarshallable(qar);
+                            });
+                        } else if (EventId.hasNext.contentEquals(eventName)) {
+                            ExcerptTailer tailer = queueToTailer.get(queue);
+                            vin.marshallable((ReadMarshallable) rm -> {
+                                long index = rm.read(() -> "index").int64();
+
+                                sendBackMessage(tailer, index);
+                            });
+                        }
+                    } finally {
+
+                        if (EventGroup.IS_DEBUG) {
+                            long len = outWire.bytes().position() - SIZE_OF_SIZE;
+                            if (len == 0) {
+                                System.out.println("--------------------------------------------\n" +
+                                        "server writes:\n\n<EMPTY>");
+
+                            } else {
+
+                                System.out.println("--------------------------------------------\n" +
+                                        "server writes:\n\n" +
+                                        Wires.fromSizePrefixedBlobs(outWire.bytes(), SIZE_OF_SIZE, len));
                             }
-                            return null;
-                        });
-
-                outWire.writeDocument(false, wireOut -> {
-                    QueueAppenderResponse qar = new QueueAppenderResponse();
-                    qar.setCid(cid);
-                    qar.setCsp(cspText);
-                    wireOut.write(CoreFields.reply).typedMarshallable(qar);
-                });
-
-            } else if (EventId.submit.contentEquals(eventName)) {
-                ExcerptAppender appender = queueToAppender.get(queue);
-                appender.writeDocument(wo -> wo.bytes().write(vin.bytes()));
-
-                outWire.writeDocument(false, wire -> wire.write(EventId.index).int64(appender.lastWrittenIndex()));
-
-            } else if (EventId.createTailer.contentEquals(eventName)) {
-                //only need one appender per queue
-                queueToTailer.computeIfAbsent(queue,
-                        s -> {
-                            try {
-                                return queue.createTailer();
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                            }
-                            return null;
-                        });
-
-                outWire.writeDocument(false, wireOut -> {
-                    QueueTailerResponse qar = new QueueTailerResponse();
-                    qar.setCid(cid);
-                    qar.setCsp(cspText);
-                    wireOut.write(CoreFields.reply).typedMarshallable(qar);
-                });
-            }else if (EventId.hasNext.contentEquals(eventName)) {
-                ExcerptTailer tailer = queueToTailer.get(queue);
-                vin.marshallable((ReadMarshallable) rm -> {
-                    long index = rm.read(() -> "index").int64();
-
-                    sendBackMessage(tailer, index);
-                });
-            }
-
-        } finally {
-
-            if (EventGroup.IS_DEBUG) {
-                long len = outWire.bytes().position() - SIZE_OF_SIZE;
-                if (len == 0) {
-                    System.out.println("--------------------------------------------\n" +
-                            "server writes:\n\n<EMPTY>");
-
-                } else {
-
-                    System.out.println("--------------------------------------------\n" +
-                            "server writes:\n\n" +
-                            Wires.fromSizePrefixedBlobs(outWire.bytes(), SIZE_OF_SIZE, len));
-                }
-            }
-        }
+                        }
+                    }
                 });
     }
 
@@ -196,7 +193,7 @@ public class QueueWireHandler implements WireHandler, Consumer<WireHandlers> {
             queue = fileNameToChronicle.computeIfAbsent
                     (filename, s -> {
                         try {
-                            return new ChronicleQueueBuilder(filename).build();
+                            return net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder.single(filename).build();
                         } catch (IOException e) {
                             e.printStackTrace();
                         }

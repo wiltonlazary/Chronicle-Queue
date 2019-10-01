@@ -15,6 +15,7 @@
  */
 package net.openhft.chronicle.queue;
 
+import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -51,6 +52,14 @@ public class ChronicleQueueMicrobench {
     //
     // *************************************************************************
 
+    public static void handleUnexpectedException(Throwable t) {
+        assertNull(t);
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        new Runner(new ChronicleQueueMicrobench().newOptionsBuilder().build()).run();
+    }
+
     private ChainedOptionsBuilder newOptionsBuilder() {
         String className = getClass().getSimpleName();
 
@@ -85,6 +94,7 @@ public class ChronicleQueueMicrobench {
         return runnerOptions;
     }
 
+    @NotNull
     private String[] jvmArgs() {
         return EMPTY_JVM_ARGS;
     }
@@ -97,19 +107,11 @@ public class ChronicleQueueMicrobench {
         return Integer.getInteger("measureIterations", -1);
     }
 
-    private String getReportDir() {
-        return System.getProperty("perfReportDir");
-    }
-
-    public static void handleUnexpectedException(Throwable t) {
-        assertNull(t);
-    }
-
     // *************************************************************************
     //
     // *************************************************************************
 
-    public static void main(String[] args) throws RunnerException {
-        new Runner(new ChronicleQueueMicrobench().newOptionsBuilder().build()).run();
+    private String getReportDir() {
+        return System.getProperty("perfReportDir");
     }
 }

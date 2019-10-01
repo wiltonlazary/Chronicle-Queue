@@ -46,11 +46,11 @@ public class Indexer {
     }
 
     /**
-     * Scans through every excerpts and records every 64th address in the index2index'
+     * Scans through every excerpts and records every 64th addressForRead in the index2index'
      *
      * @
      */
-    public synchronized void index()   {
+    public synchronized void index() {
         final ExcerptTailer tailer = chronicle.createTailer();
 
         for (long i = 0; i <= chronicle.lastIndex(); i++) {
@@ -65,10 +65,10 @@ public class Indexer {
     }
 
     /**
-     * records every 64th address in the index2index
+     * records every 64th addressForRead in the index2index
      *
      * @param index   the index of the Excerpts which we are going to record
-     * @param address the address of the Excerpts which we are going to record
+     * @param address the addressForRead of the Excerpts which we are going to record
      */
     private void recordAddress(long index, long address) {
         if (index % 64 != 0)
@@ -78,7 +78,8 @@ public class Indexer {
         final long index2Index = chronicle.indexToIndex();
 
         chronicle.wire().readDocument(index2Index, rootIndex -> {
-            rootIndex.read(() -> "index").int64array(array, longArrayValues -> {});
+            rootIndex.read(() -> "index").int64array(array, longArrayValues -> {
+            });
 
             long secondaryAddress = array.getValueAt(toAddress0(index));
             if (secondaryAddress == UNINITIALISED) {
@@ -86,7 +87,8 @@ public class Indexer {
             }
 
             chronicle.wire().readDocument(secondaryAddress, secondaryIndex -> {
-                secondaryIndex.read(() -> "index").int64array(array, longArrayValues -> {});
+                secondaryIndex.read(() -> "index").int64array(array, longArrayValues -> {
+                });
                 array.setValueAt(toAddress1(index), address);
             }, null);
         }, null);

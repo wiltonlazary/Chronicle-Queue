@@ -101,7 +101,7 @@ try (DocumentContext dc = appender.writingDocument()) {
 
 === Changes to the Bytes API.
 
-Chronicle Bytes disguishes between the read and write position, remaining and limit.
+Chronicle Bytes distinguishes between the read and write position, remaining and limit.
 
 When reading you want to use
 
@@ -114,5 +114,4 @@ When writing you want to use
 - getter `writePosition()` and setter `writePosition(long)` - position to write next
 - getter `writeLimit()` and setter `writeLimit(long)` -  last valid writePosition().
 - writeRemaining() is  writeLimit() - writePosition();
-
 

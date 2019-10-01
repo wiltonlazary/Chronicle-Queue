@@ -15,8 +15,13 @@
  */
 package net.openhft.chronicle.queue;
 
-import net.openhft.chronicle.queue.impl.single.Utils;
+import net.openhft.chronicle.bytes.BytesUtil;
+import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.wire.WireKey;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.After;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.rules.*;
 import org.junit.runner.Description;
@@ -24,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.UUID;
 
 public class ChronicleQueueTestBase {
     protected static final Logger LOGGER = LoggerFactory.getLogger(ChronicleQueueTestBase.class);
@@ -42,10 +48,11 @@ public class ChronicleQueueTestBase {
     @Rule
     public final ErrorCollector errorCollector = new ErrorCollector();
 
+    @NotNull
     @Rule
     public TestRule watcher = new TestWatcher() {
         @Override
-        protected void starting(Description description) {
+        protected void starting(@NotNull Description description) {
             if (TRACE_TEST_EXECUTION) {
                 LOGGER.info("Starting test: {}.{}",
                         description.getClassName(),
@@ -59,8 +66,49 @@ public class ChronicleQueueTestBase {
     //
     // *************************************************************************
 
+    static void deleteDir(@NotNull String... dirs) {
+        for (String dir : dirs) {
+            try {
+                deleteDir(new File(dir));
+            } catch (Exception e) {
+                Jvm.warn().on(ChronicleQueueTestBase.class, e);
+            }
+        }
+    }
+
+    public static void deleteDir(@NotNull File dir) {
+        if (dir.isDirectory()) {
+            @Nullable File[] files = dir.listFiles();
+            if (files != null) {
+                for (@NotNull File file : files) {
+                    if (file.isDirectory()) {
+                        deleteDir(file);
+                    } else
+                        //noinspection ResultOfMethodCallIgnored
+                        file.delete();
+                }
+            }
+        }
+
+        dir.delete();
+    }
+
+    @NotNull
     protected File getTmpDir() {
-        return Utils.tempDir(testName.getMethodName());
+        final String methodName = testName.getMethodName();
+        return DirectoryUtils.tempDir(methodName != null ?
+                methodName.replaceAll("[\\[\\]\\s]+", "_").replace(':', '_') : "NULL-" + UUID
+                .randomUUID());
+    }
+
+    @BeforeClass
+    public static void synchronousFileTruncating() {
+        System.setProperty("chronicle.queue.synchronousFileShrinking", "true");
+    }
+
+    @After
+    public void checkRegisteredBytes() {
+        BytesUtil.checkRegisteredBytes();
     }
 
     public enum TestKey implements WireKey {

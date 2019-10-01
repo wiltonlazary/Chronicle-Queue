@@ -1,13 +1,17 @@
 package net.openhft.chronicle.queue.impl.single;
 
+import net.openhft.chronicle.bytes.MappedFile;
 import net.openhft.chronicle.bytes.StopCharTesters;
 import net.openhft.chronicle.core.time.TimeProvider;
 import net.openhft.chronicle.queue.ChronicleQueue;
+import net.openhft.chronicle.queue.DirectoryUtils;
 import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.queue.impl.StoreFileListener;
 import net.openhft.chronicle.wire.DocumentContext;
 import net.openhft.chronicle.wire.Wires;
+import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -24,86 +28,93 @@ public class RollCycleMultiThreadTest {
 
     @Test
     public void testRead1() throws Exception {
-        File path = Utils.tempDir(getClass().getSimpleName());
+        File path = DirectoryUtils.tempDir(getClass().getSimpleName());
         TestTimeProvider timeProvider = new TestTimeProvider();
 
-        ChronicleQueue queue0 = SingleChronicleQueueBuilder
+        try (ChronicleQueue queue0 = SingleChronicleQueueBuilder
                 .fieldlessBinary(path)
                 .testBlockSize()
                 .rollCycle(DAILY)
-                .timeProvider(timeProvider).build();
+                .timeProvider(timeProvider).build()) {
 
-        ParallelQueueObserver observer = new ParallelQueueObserver(queue0);
+            ParallelQueueObserver observer = new ParallelQueueObserver(queue0);
 
-        final ExecutorService scheduledExecutorService = Executors
-                .newSingleThreadScheduledExecutor();
+            final ExecutorService scheduledExecutorService = Executors
+                    .newSingleThreadScheduledExecutor();
 
-        try (SingleChronicleQueue queue = SingleChronicleQueueBuilder
-                .fieldlessBinary(path)
-                .testBlockSize()
-                .rollCycle(DAILY)
-                .timeProvider(timeProvider)
-                .build()) {
-            ExcerptAppender appender = queue.acquireAppender();
+            try (ChronicleQueue queue = SingleChronicleQueueBuilder
+                    .fieldlessBinary(path)
+                    .testBlockSize()
+                    .rollCycle(DAILY)
+                    .timeProvider(timeProvider)
+                    .build()) {
+                ExcerptAppender appender = queue.acquireAppender();
 
-            Assert.assertEquals(0, (int) scheduledExecutorService.submit(observer::call).get());
-            // two days pass
-            timeProvider.add(TimeUnit.DAYS.toMillis(2));
+                Assert.assertEquals(0, (int) scheduledExecutorService.submit(observer::call).get());
+                // two days pass
+                timeProvider.add(TimeUnit.DAYS.toMillis(2));
 
-            try (final DocumentContext dc = appender.writingDocument()) {
-                dc.wire().write().text("Day 3 data");
+                try (final DocumentContext dc = appender.writingDocument()) {
+                    dc.wire().write().text("Day 3 data");
+                }
+                Assert.assertEquals(1, (int) scheduledExecutorService.submit(observer::call).get());
+                assertEquals(1, observer.documentsRead);
+
             }
-            Assert.assertEquals(1, (int) scheduledExecutorService.submit(observer::call).get());
-            assertEquals(1, observer.documentsRead);
-
         }
-
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     public void testRead2() throws Exception {
-        File path = Utils.tempDir("testRead2");
+        File path = DirectoryUtils.tempDir("testRead2");
         TestTimeProvider timeProvider = new TestTimeProvider();
 
-        ChronicleQueue queue0 = SingleChronicleQueueBuilder
-                .fieldlessBinary(path)
-                .testBlockSize()
-                .rollCycle(DAILY)
-                .timeProvider(timeProvider)
-                .build();
-
-        final ParallelQueueObserver observer = new ParallelQueueObserver(queue0);
-
-        final ExecutorService scheduledExecutorService = Executors
-                .newSingleThreadScheduledExecutor();
-
-        try (SingleChronicleQueue queue = SingleChronicleQueueBuilder
+        try (ChronicleQueue queue0 = SingleChronicleQueueBuilder
                 .fieldlessBinary(path)
                 .testBlockSize()
                 .rollCycle(DAILY)
                 .timeProvider(timeProvider)
                 .build()) {
 
-            ExcerptAppender appender = queue.acquireAppender();
+            final ParallelQueueObserver observer = new ParallelQueueObserver(queue0);
 
-            try (final DocumentContext dc = appender.writingDocument()) {
-                dc.wire().write().text("Day 1 data");
+            final ExecutorService scheduledExecutorService = Executors
+                    .newSingleThreadScheduledExecutor();
+
+            try (ChronicleQueue queue = SingleChronicleQueueBuilder
+                    .fieldlessBinary(path)
+                    .testBlockSize()
+                    .rollCycle(DAILY)
+                    .timeProvider(timeProvider)
+                    .build()) {
+
+                ExcerptAppender appender = queue.acquireAppender();
+
+                try (final DocumentContext dc = appender.writingDocument()) {
+                    dc.wire().write().text("Day 1 data");
+                }
+
+                Assert.assertEquals(1, (int) scheduledExecutorService.submit(observer).get());
+
+                // two days pass
+                timeProvider.add(TimeUnit.DAYS.toMillis(2));
+
+                try (final DocumentContext dc = appender.writingDocument()) {
+                    dc.wire().write().text("Day 3 data");
+                }
+
+                Assert.assertEquals(2, (int) scheduledExecutorService.submit(observer).get());
+
+                System.out.println(queue.dump());
+                assertEquals(2, observer.documentsRead);
             }
-
-            Assert.assertEquals(1, (int) scheduledExecutorService.submit(observer).get());
-
-            // two days pass
-            timeProvider.add(TimeUnit.DAYS.toMillis(2));
-
-            try (final DocumentContext dc = appender.writingDocument()) {
-                dc.wire().write().text("Day 3 data");
-            }
-
-            Assert.assertEquals(2, (int) scheduledExecutorService.submit(observer).get());
-
-            System.out.println(queue.dump());
-            assertEquals(2, observer.documentsRead);
         }
+    }
+
+    @After
+    public void checkMappedFiles() {
+        MappedFile.checkMappedFiles();
     }
 
     private class TestTimeProvider implements TimeProvider {
@@ -118,15 +129,15 @@ public class RollCycleMultiThreadTest {
         void add(long addInMs) {
             this.addInMs = addInMs;
         }
-
     }
 
     private class ParallelQueueObserver implements Callable, StoreFileListener {
 
+        @NotNull
         private final ExcerptTailer tailer;
         volatile int documentsRead;
 
-        ParallelQueueObserver(ChronicleQueue queue) {
+        ParallelQueueObserver(@NotNull ChronicleQueue queue) {
             documentsRead = 0;
             tailer = queue.createTailer();
         }
@@ -154,7 +165,7 @@ public class RollCycleMultiThreadTest {
                 dc.wire().bytes().parse8bit(sb, StopCharTesters.ALL);
 
                 String readText = sb.toString();
-                if (java.util.Objects.equals(sb, "")) {
+                if (java.util.Objects.equals(readText, "")) {
                     return documentsRead;
                 }
                 System.out.println("Read a document " + readText);

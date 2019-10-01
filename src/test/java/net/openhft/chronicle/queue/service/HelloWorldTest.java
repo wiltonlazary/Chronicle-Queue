@@ -17,19 +17,19 @@
 
 package net.openhft.chronicle.queue.service;
 
+import net.openhft.chronicle.bytes.MethodReader;
 import net.openhft.chronicle.core.OS;
 import net.openhft.chronicle.core.io.Closeable;
 import net.openhft.chronicle.core.io.IORuntimeException;
 import net.openhft.chronicle.core.io.IOTools;
-import net.openhft.chronicle.wire.MethodReader;
 import org.junit.Test;
 
 import java.io.File;
 
 import static org.easymock.EasyMock.*;
 
-/**
- * Created by peter on 23/04/16.
+/*
+ * Created by Peter Lawrey on 23/04/16.
  */
 public class HelloWorldTest {
     @Test

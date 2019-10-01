@@ -18,11 +18,11 @@ package net.openhft.chronicle.queue.impl.single.jira;
 import net.openhft.chronicle.queue.ChronicleQueue;
 import net.openhft.chronicle.queue.ChronicleQueueTestBase;
 import net.openhft.chronicle.queue.ExcerptTailer;
-import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
+import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.IOException;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -32,26 +32,27 @@ import static org.junit.Assert.assertTrue;
  */
 public class Queue36Test extends ChronicleQueueTestBase {
     @Test
-    public void testTail() throws IOException {
+    public void testTail() {
         File basePath = getTmpDir();
-        ChronicleQueue queue = SingleChronicleQueueBuilder.binary(basePath)
+        try (ChronicleQueue queue = ChronicleQueue.singleBuilder(basePath)
                 .testBlockSize()
-                .build();
+                .build()) {
 
-        checkNoFiles(basePath);
-        ExcerptTailer tailer = queue.createTailer();
-        checkNoFiles(basePath);
-        tailer.toStart();
-        checkNoFiles(basePath);
+            checkNoFiles(basePath);
+            ExcerptTailer tailer = queue.createTailer();
+            checkNoFiles(basePath);
+            tailer.toStart();
+            checkNoFiles(basePath);
 
-        assertFalse(tailer.readDocument(d -> {
-        }));
+            assertFalse(tailer.readDocument(d -> {
+            }));
 
-        checkNoFiles(basePath);
+            checkNoFiles(basePath);
+        }
     }
 
-    public void checkNoFiles(File basePath) {
-        String[] fileNames = basePath.list();
+    private void checkNoFiles(@NotNull File basePath) {
+        String[] fileNames = basePath.list((d, n) -> n.endsWith(SingleChronicleQueue.SUFFIX));
         assertTrue(fileNames == null || fileNames.length == 0);
     }
 }

@@ -17,9 +17,12 @@
 package net.openhft.chronicle.queue;
 
 import net.openhft.chronicle.bytes.Bytes;
+import net.openhft.chronicle.bytes.BytesUtil;
+import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.core.threads.ThreadDump;
+import net.openhft.chronicle.queue.impl.single.SingleChronicleQueue;
 import net.openhft.chronicle.queue.impl.single.SingleChronicleQueueBuilder;
-import net.openhft.chronicle.queue.impl.single.Utils;
+import net.openhft.chronicle.queue.impl.single.StoreComponentReferenceHandler;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static net.openhft.chronicle.queue.RollCycles.TEST_DAILY;
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeFalse;
 
 /**
  * @author Rob Austin.
@@ -43,6 +47,8 @@ public class ThreadedQueueTest {
     @Before
     public void threadDump() {
         threadDump = new ThreadDump();
+        threadDump.ignore(StoreComponentReferenceHandler.THREAD_NAME);
+        threadDump.ignore(SingleChronicleQueue.DISK_SPACE_CHECKER_NAME);
     }
 
     @After
@@ -53,14 +59,14 @@ public class ThreadedQueueTest {
     @Test(timeout = 10000)
     public void testMultipleThreads() throws java.io.IOException, InterruptedException, ExecutionException, TimeoutException {
 
-        final File path = Utils.tempDir("testMultipleThreads");
+        final File path = DirectoryUtils.tempDir("testMultipleThreads");
 
         final AtomicInteger counter = new AtomicInteger();
 
         ExecutorService tailerES = Executors.newSingleThreadExecutor(/*new NamedThreadFactory("tailer", true)*/);
         Future tf = tailerES.submit(() -> {
             try {
-                final ChronicleQueue rqueue = SingleChronicleQueueBuilder.binary(path)
+                final ChronicleQueue rqueue = ChronicleQueue.singleBuilder(path)
                         .testBlockSize()
                         .build();
 
@@ -72,6 +78,8 @@ public class ThreadedQueueTest {
                     if (tailer.readBytes(bytes))
                         counter.incrementAndGet();
                 }
+
+                bytes.release();
             } catch (Throwable t) {
                 t.printStackTrace();
             }
@@ -80,7 +88,7 @@ public class ThreadedQueueTest {
         ExecutorService appenderES = Executors.newSingleThreadExecutor(/*new NamedThreadFactory("appender", true)*/);
         Future af = appenderES.submit(() -> {
             try {
-                final ChronicleQueue wqueue = SingleChronicleQueueBuilder.binary(path)
+                final ChronicleQueue wqueue = ChronicleQueue.singleBuilder(path)
                         .testBlockSize()
                         .build();
 
@@ -92,6 +100,7 @@ public class ThreadedQueueTest {
                     message.append(i);
                     appender.writeBytes(message);
                 }
+                message.release();
             } catch (Throwable t) {
                 t.printStackTrace();
             }
@@ -108,9 +117,9 @@ public class ThreadedQueueTest {
     }
 
     @Test//(timeout = 5000)
-    public void testTailerReadingEmptyQueue() throws java.io.IOException {
-
-        final File path = Utils.tempDir("testTailerReadingEmptyQueue");
+    public void testTailerReadingEmptyQueue() {
+        assumeFalse(Jvm.isArm());
+        final File path = DirectoryUtils.tempDir("testTailerReadingEmptyQueue");
 
         final ChronicleQueue rqueue = SingleChronicleQueueBuilder.fieldlessBinary(path)
                 .testBlockSize()
@@ -134,5 +143,11 @@ public class ThreadedQueueTest {
         assertTrue(tailer.readBytes(bytes));
         assertEquals("Hello World", bytes.toString());
 
+        bytes.release();
+    }
+
+    @After
+    public void checkRegisteredBytes() {
+        BytesUtil.checkRegisteredBytes();
     }
 }

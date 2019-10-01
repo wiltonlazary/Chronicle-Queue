@@ -18,7 +18,6 @@
 package net.openhft.chronicle.queue.impl;
 
 import net.openhft.chronicle.queue.ChronicleQueue;
-import net.openhft.chronicle.queue.ChronicleQueueBuilder;
 import net.openhft.chronicle.queue.ExcerptAppender;
 import net.openhft.chronicle.queue.ExcerptTailer;
 import net.openhft.chronicle.wire.BinaryWire;
@@ -37,22 +36,22 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class SingleChronicleQueueTest {
 
-    @Parameterized.Parameters
-    public static Collection<Class[]> data() {
-        return Arrays.asList(new Class[][]{
-            { BinaryWire.class },
-            { TextWire.class }
-        });
-    }
+    private final Class<? extends Wire> wireType;
 
     // *************************************************************************
     //
     // *************************************************************************
 
-    private final Class<? extends Wire> wireType;
-
     public SingleChronicleQueueTest(final Class<? extends Wire> wireType) {
         this.wireType = wireType;
+    }
+
+    @Parameterized.Parameters
+    public static Collection<Class[]> data() {
+        return Arrays.asList(new Class[][]{
+                {BinaryWire.class},
+                {TextWire.class}
+        });
     }
 
     protected File createTempFile(String suffix) throws IOException {
@@ -74,7 +73,7 @@ public class SingleChronicleQueueTest {
     // *************************************************************************
 
     @Test
-    public void testSingleWire()   {
+    public void testSingleWire() {
         final File file = createTempFile("testSingleWire");
 
         try {
@@ -99,7 +98,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testSingleDirect()   {
+    public void testSingleDirect() {
         final File file = createTempFile("testSingleDirect");
 
         try {
@@ -127,7 +126,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testLastWrittenIndexPerAppender()   {
+    public void testLastWrittenIndexPerAppender() {
         final File file = createTempFile("testLastWrittenIndexPerAppender");
         try {
 
@@ -142,7 +141,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testLastWrittenIndexPerAppenderNoData()   {
+    public void testLastWrittenIndexPerAppenderNoData() {
         final File file = createTempFile("testLastWrittenIndexPerAppenderNoData");
         try {
             final ChronicleQueue chronicle = createQueue(file);
@@ -154,7 +153,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testLastIndexPerChronicle()   {
+    public void testLastIndexPerChronicle() {
         final File file = createTempFile("testLastIndexPerChronicle");
         try {
             final DirectChronicleQueue chronicle = createQueue(file);
@@ -168,7 +167,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testLastIndexPerChronicleNoData()   {
+    public void testLastIndexPerChronicleNoData() {
         final File file = createTempFile("testLastIndexPerChronicleNoData");
         try {
             final DirectChronicleQueue chronicle = createQueue(file);
@@ -179,7 +178,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testReadAtIndexSingle()   {
+    public void testReadAtIndexSingle() {
         final File file = createTempFile("testReadAtIndexSingle");
         try {
             final DirectChronicleQueue chronicle = createQueue(file);
@@ -204,7 +203,7 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testReadAtIndex()   {
+    public void testReadAtIndex() {
         final File file = createTempFile("testReadAtIndex");
         try {
             final DirectChronicleQueue chronicle = createQueue(file);
@@ -232,10 +231,10 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testReadAtIndexWithIndexes()   {
+    public void testReadAtIndexWithIndexes() {
         final File file = createTempFile("testReadAtIndexWithIndexes");
         try {
-            final SingleChronicleQueue chronicle = (SingleChronicleQueue)createQueue(file);
+            final SingleChronicleQueue chronicle = (SingleChronicleQueue) createQueue(file);
             final ExcerptAppender appender = chronicle.acquireAppender();
 
             // create 100 documents
@@ -260,10 +259,10 @@ public class SingleChronicleQueueTest {
     }
 
     @Test
-    public void testReadAtIndexWithIndexesAtStart()   {
+    public void testReadAtIndexWithIndexesAtStart() {
         final File file = createTempFile("testReadAtIndexWithIndexesAtStart");
         try {
-            final SingleChronicleQueue chronicle = (SingleChronicleQueue)createQueue(file);
+            final SingleChronicleQueue chronicle = (SingleChronicleQueue) createQueue(file);
             final ExcerptAppender appender = chronicle.acquireAppender();
 
             // create 100 documents
@@ -281,17 +280,17 @@ public class SingleChronicleQueueTest {
             StringBuilder sb = new StringBuilder();
             tailer.readDocument(wire -> wire.read(() -> "key").text(sb));
 
-            Assert.assertEquals("value="+index, sb.toString());
+            Assert.assertEquals("value=" + index, sb.toString());
         } finally {
             file.delete();
         }
     }
 
     @Test
-    public void testScanFromLastKnownIndex()   {
+    public void testScanFromLastKnownIndex() {
         final File file = createTempFile("testScanFromLastKnownIndex");
         try {
-            final SingleChronicleQueue chronicle = (SingleChronicleQueue)createQueue(file);
+            final SingleChronicleQueue chronicle = (SingleChronicleQueue) createQueue(file);
             final ExcerptAppender appender = chronicle.acquireAppender();
 
             // create 100 documents
@@ -330,7 +329,6 @@ public class SingleChronicleQueueTest {
 
                 Assert.assertEquals("value=" + expected, sb.toString());
             }
-
         } finally {
             file.delete();
         }
